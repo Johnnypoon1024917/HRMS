@@ -1,0 +1,106 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hrms
+      POSTGRES_PASSWORD: hrms
+      POSTGRES_DB: hrms
+    ports: ["5435:5432"]   # host 5435 → container 5432 (5432 is in use on host)
+    volumes: [hrms_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms -d hrms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # Internal-only — avoids colliding with a local Redis on :6379. Expose
+    # by adding `ports: ["6379:6379"]` if you need host access.
+    expose: ["6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: applies registry schema and seeds the demo tenant. Re-runs are
+  # safe (seed.ts is idempotent). Wired as a real dependency of `api` via
+  # `service_completed_successfully`, so `docker compose up -d` runs init
+  # once and then starts api+web. No manual `compose run` step required.
+  init:
+    image: hrms-api          # same tag as the api service — one build, shared
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: "no"
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://hrms:hrms@db:5432/hrms
+    working_dir: /app/apps/api
+    # YAML list form keeps argv intact (the folded `>` block was being
+    # word-split, causing "sh: syntax error: unexpected &&").
+    entrypoint: ["sh", "-c"]
+    # `db push` (not `migrate deploy`) — registry has no migration history
+    # yet, `db push` syncs the schema directly. The seed script runs
+    # `db push` for the per-tenant schema itself.
+    command:
+      - >
+        npx prisma db push --schema prisma/registry.prisma --skip-generate --accept-data-loss
+        && node prisma/seed.js
+
+  api:
+    image: hrms-api          # explicit tag so `init` can reuse the same image
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:    { condition: service_healthy }
+      redis: { condition: service_healthy }
+      init:  { condition: service_completed_successfully }
+    environment:
+      DATABASE_URL: postgresql://hrms:hrms@db:5432/hrms
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: change-me-in-prod
+      DEPLOYMENT_MODE: saas          # set to "onprem" + SINGLE_TENANT for on-prem
+      API_PUBLIC_URL: http://localhost:4000
+      WEB_PUBLIC_URL: http://localhost:5000
+      # Billing (leave blank to run in dry-run mode locally).
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # On-prem only — operator signs elsewhere, drop the JWT into LICENSE_KEY.
+      LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:-}
+      LICENSE_KEY: ${LICENSE_KEY:-}
+      SINGLE_TENANT: ${SINGLE_TENANT:-}
+    ports: ["4000:4000"]
+    healthcheck:
+      # `node -e` keeps the image dep-free (no need for curl). A response on
+      # any non-error status counts as healthy; the API's tenant middleware
+      # returns 404 here which is fine — it proves the process is listening.
+      test:
+        - "CMD-SHELL"
+        - "node -e \"require('http').get('http://127.0.0.1:4000/api/auth/login',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  web:
+    image: hrms-web
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      API_URL: http://api:4000             # used by the /api rewrite
+      NEXT_PUBLIC_TENANT: acme             # dev fallback when no sub-domain
+    ports: ["5000:5000"]
+
+volumes:
+  hrms_db:

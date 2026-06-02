@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/coverage
+.git
+.env
+**/.env
+**/_extracted_*.txt
+*.log
+docker-compose*.yml
+**/Dockerfile
+README.md
+docs

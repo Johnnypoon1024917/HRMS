@@ -1,0 +1,13 @@
+{
+  "name": "People HRMS",
+  "short_name": "HRMS",
+  "description": "Modular HR platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f9fa",
+  "theme_color": "#1a73e8",
+  "icons": [
+    { "src": "/brand/default/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/brand/default/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

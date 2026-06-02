@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.next/
+.env
+*.log
+_extracted_*.txt
+apps/api/prisma/*.db
+coverage/

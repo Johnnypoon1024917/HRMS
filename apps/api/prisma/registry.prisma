@@ -1,0 +1,130 @@
+// Global registry — lives in the `public` schema. One row per customer.
+// Generated client: RegistryPrismaService.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/registry"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DeploymentMode {
+  saas
+  onprem
+  dedicated
+}
+
+model Tenant {
+  id             String         @id @default(cuid())
+  slug           String         @unique
+  name           String
+  status         String         @default("active")
+  deploymentMode DeploymentMode @default(saas)
+  /// Postgres schema holding this tenant's HR data, e.g. "tenant_acme".
+  dbSchema       String
+  /// Optional dedicated connection string (DB-per-tenant / on-prem premium).
+  dbUrl          String?
+  /// Pluggable IdP config (OIDC/SAML/LDAP). Shape:
+  /// { "type":"oidc", "issuer":"https://...", "clientId":"...",
+  ///   "clientSecret":"...", "scopes":["openid","email","profile"] }
+  /// Null => password login only (or env-level default IdP).
+  idp            Json?
+  /// Provider customer id (e.g. Stripe `cus_…`). Optional for on-prem.
+  stripeCustomerId String?
+  createdAt      DateTime       @default(now())
+
+  modules      TenantModule[]
+  branding     TenantBranding?
+  subscription Subscription?
+  usage        UsageEvent[]
+}
+
+model TenantModule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  moduleKey String
+  enabled   Boolean  @default(true)
+  settings  Json     @default("{}")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, moduleKey])
+}
+
+model TenantBranding {
+  tenantId String @id
+  /// Typed by @hrms/contracts TenantBranding.
+  branding Json
+  version  Int    @default(1)
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+}
+
+model PlatformAdmin {
+  id           String @id @default(cuid())
+  email        String @unique
+  passwordHash String
+}
+
+// ---------- SaaS subscription billing (bil) ----------
+
+/// Plans the operator offers. `includedModules` drive what gets enabled on
+/// the matching `TenantModule` rows when a subscription becomes active.
+model Plan {
+  code                 String         @id
+  name                 String
+  monthlyPrice         Int            @default(0) // smallest unit (cents)
+  currency             String         @default("USD")
+  includedModules      String[]
+  maxSeats             Int            @default(0) // 0 = unlimited
+  perSeatOverage       Int            @default(0)
+  active               Boolean        @default(true)
+  /// Stripe Prices (recurring base + optional metered seat usage).
+  stripePriceId        String?
+  stripeMeteredPriceId String?
+  subscriptions        Subscription[]
+}
+
+model Subscription {
+  tenantId             String   @id
+  tenant               Tenant   @relation(fields: [tenantId], references: [id])
+  planCode             String
+  plan                 Plan     @relation(fields: [planCode], references: [code])
+  status               String   @default("incomplete") // trialing|active|past_due|canceled|unpaid|incomplete
+  stripeSubscriptionId String?  @unique
+  currentPeriodEnd     DateTime?
+  trialEndsAt          DateTime?
+  updatedAt            DateTime @updatedAt
+}
+
+/// Metered usage we ship to the billing provider (e.g. nightly seat count).
+model UsageEvent {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  metric    String // "active_staff" today; add as needed
+  value     Int
+  at        DateTime @default(now())
+  reportedAt DateTime?
+
+  @@index([tenantId, metric, at])
+}
+
+/// Signed license issued by the SaaS operator for on-prem entitlement.
+/// The on-prem `api` verifies the JWT at boot — modules not in the key are
+/// refused to enable, the same way SaaS uses `Subscription.status`.
+model LicenseKey {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenantSlug String
+  /// Compact serialised JWT (RS256).
+  jwt       String
+  modules   String[]
+  maxSeats  Int      @default(0)
+  expiresAt DateTime
+  revokedAt DateTime?
+  issuedAt  DateTime @default(now())
+
+  @@index([tenantId])
+}

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2022",
+    "moduleResolution": "node",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "strictPropertyInitialization": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "ignoreDeprecations": "5.0"
+  },
+  // Only `src` here. The seed (`prisma/seed.ts`) is compiled by a separate
+  // `tsc` invocation in the Dockerfile so its `../node_modules/.prisma/...`
+  // relative import doesn't poison the main compile.
+  // `@hrms/contracts` is resolved via workspace lookup → its compiled
+  // `dist/index.js` / `dist/index.d.ts` (built before the API compile).
+  "include": ["src"]
+}

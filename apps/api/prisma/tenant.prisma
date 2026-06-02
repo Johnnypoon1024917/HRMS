@@ -1,0 +1,1020 @@
+// Per-tenant HR data. Identical layout for every tenant; the target schema
+// (`tenant_<slug>`) is injected into the connection string at runtime by
+// TenantPrismaService. On-prem = a single tenant schema. Default client.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Identity & access ----------
+
+model AppUser {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  displayName  String
+  locale       String          @default("en")
+  passwordHash String?
+  idpSubject   String? // set when authenticated via OIDC/SAML/LDAP
+  status       String          @default("active")
+  assignments  PostAssignment[]
+  grants       RoleGrant[]
+  createdAt    DateTime        @default(now())
+}
+
+model OrgUnit {
+  id       String    @id @default(cuid())
+  parentId String?
+  parent   OrgUnit?  @relation("OrgTree", fields: [parentId], references: [id])
+  children OrgUnit[] @relation("OrgTree")
+  type     String // institution | section | unit
+  code     String    @unique
+  nameEn   String
+  nameZh   String?
+  posts    Post[]
+}
+
+model Post {
+  id                String           @id @default(cuid())
+  orgUnitId         String
+  orgUnit           OrgUnit          @relation(fields: [orgUnitId], references: [id])
+  rankCode          String
+  title             String
+  establishmentType String           @default("permanent")
+  status            String           @default("vacant") // vacant | filled | frozen
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  assignments       PostAssignment[]
+  appointments      StaffAppointment[]
+}
+
+model PostAssignment {
+  id             String    @id @default(cuid())
+  userId         String
+  user           AppUser   @relation(fields: [userId], references: [id])
+  postId         String
+  post           Post      @relation(fields: [postId], references: [id])
+  assignmentType String    @default("substantive") // substantive | acting
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+}
+
+model Role {
+  id          String      @id @default(cuid())
+  name        String      @unique
+  permissions String[] // e.g. ["pim.read","pim.write"]
+  grants      RoleGrant[]
+}
+
+model RoleGrant {
+  id                  String  @id @default(cuid())
+  userId              String
+  user                AppUser @relation(fields: [userId], references: [id])
+  roleId              String
+  role                Role    @relation(fields: [roleId], references: [id])
+  /// Data scope: null = all units; otherwise this org unit subtree.
+  dataScopeOrgUnitId  String?
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  at           DateTime @default(now())
+  userId       String?
+  activePostId String?
+  action       String // create | update | delete | login | export
+  entity       String
+  entityId     String?
+  before       Json?
+  after        Json?
+  ip           String?
+
+  @@index([entity, entityId])
+  @@index([at])
+}
+
+model CodeTable {
+  id     String      @id @default(cuid())
+  key    String      @unique // e.g. "rank", "exit_reason"
+  nameEn String
+  nameZh String?
+  values CodeValue[]
+}
+
+model CodeValue {
+  id      String    @id @default(cuid())
+  tableId String
+  table   CodeTable @relation(fields: [tableId], references: [id])
+  code    String
+  labelEn String
+  labelZh String?
+  active  Boolean   @default(true)
+  sort    Int       @default(0)
+
+  @@unique([tableId, code])
+}
+
+model BringUp {
+  id        String   @id @default(cuid())
+  dueAt     DateTime
+  type      String // e.g. "training_cert_renewal", "pre_retirement"
+  refEntity String
+  refId     String
+  /// Permission/scope expression used to fan out to assignees.
+  scope     String
+  status    String   @default("open") // open | done | dismissed
+  createdAt DateTime @default(now())
+
+  @@index([dueAt, status])
+}
+
+// ---------- PIM ----------
+
+model Staff {
+  id             String              @id @default(cuid())
+  staffNo        String              @unique
+  userId         String?
+  nameEn         String
+  nameZh         String?
+  sex            String
+  dob            DateTime
+  idType         String
+  /// Encrypted at rest (see common/crypto).
+  idNoEnc        String
+  classification String              @default("internal") // public | internal | restricted
+  status         String              @default("active") // active | delflag
+  createdAt      DateTime            @default(now())
+  contacts       StaffContact[]
+  appointments   StaffAppointment[]
+  salaries       StaffSalary[]
+  qualifications StaffQualification[]
+  documents      StaffDocument[]
+
+  @@index([nameEn])
+  @@index([status])
+}
+
+model StaffContact {
+  id            String    @id @default(cuid())
+  staffId       String
+  staff         Staff     @relation(fields: [staffId], references: [id])
+  kind          String // phone | email | address | emergency
+  value         String
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+}
+
+model StaffAppointment {
+  id            String    @id @default(cuid())
+  staffId       String
+  staff         Staff     @relation(fields: [staffId], references: [id])
+  postId        String?
+  post          Post?     @relation(fields: [postId], references: [id])
+  rankCode      String
+  basis         String    @default("permanent")
+  /// Contract type drives the payroll path:
+  ///   permanent   - monthly salary, regular flow (default)
+  ///   fixed_term  - monthly salary + optional end-of-contract gratuity
+  ///   hourly      - pay = hourlyRate × hours from Timesheet
+  ///   daily       - pay = dailyRate × daysWorked from Timesheet
+  ///   part_time   - reduced FTE; uses fteFactor against base/hourly rate
+  contractType  String    @default("permanent")
+  /// Fixed-term contracts only.
+  contractEndDate DateTime?
+  /// Annual rate as a decimal (e.g. 0.15 for 15%). Applied to total salary
+  /// paid over the contract on contract end / renewal.
+  gratuityRate  Decimal   @default(0)
+  /// Hourly rate (hourly contracts).
+  hourlyRate    Decimal   @default(0)
+  /// Daily rate (daily / casual contracts).
+  dailyRate     Decimal   @default(0)
+  /// Contracted weekly hours; drives EO "continuous contract" 418 test
+  /// (≥18 hrs/wk for ≥4 weeks → continuous → full EO protection).
+  weeklyHours   Decimal   @default(40)
+  /// FTE factor for part-time staff (0..1).
+  fteFactor     Decimal   @default(1)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  @@index([staffId, effectiveFrom])
+}
+
+model StaffSalary {
+  id            String    @id @default(cuid())
+  staffId       String
+  staff         Staff     @relation(fields: [staffId], references: [id])
+  scaleCode     String
+  point         Int
+  amount        Decimal
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+}
+
+model StaffQualification {
+  id          String   @id @default(cuid())
+  staffId     String
+  staff       Staff    @relation(fields: [staffId], references: [id])
+  type        String
+  title       String
+  institution String?
+  awardedOn   DateTime?
+}
+
+model StaffDocument {
+  id             String   @id @default(cuid())
+  staffId        String
+  staff          Staff    @relation(fields: [staffId], references: [id])
+  docType        String
+  fileKey        String
+  classification String   @default("internal")
+  uploadedBy     String?
+  uploadedAt     DateTime @default(now())
+}
+
+model StaffImportBatch {
+  id              String   @id @default(cuid())
+  fileKey         String
+  status          String   @default("processing") // processing | done | failed
+  totalRows       Int      @default(0)
+  okRows          Int      @default(0)
+  errorRows       Int      @default(0)
+  exceptionFileKey String?
+  createdAt       DateTime @default(now())
+}
+
+// ---------- ESM / ORM ----------
+
+model PostRequest {
+  id            String    @id @default(cuid())
+  action        String // create | update | delete
+  postId        String?
+  payload       Json?
+  effectiveDate DateTime
+  status        String    @default("pending") // pending | applied | rejected
+  reason        String?
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, effectiveDate])
+}
+
+model EsSnapshot {
+  id            String   @id @default(cuid())
+  snapshotDate  DateTime
+  orgUnitId     String
+  rankCode      String
+  establishment Int
+  strength      Int
+  actingIn      Int      @default(0)
+  deployIn      Int      @default(0)
+  deployOut     Int      @default(0)
+
+  @@unique([snapshotDate, orgUnitId, rankCode])
+}
+
+// ---------- Payroll (pay) ----------
+//
+// Engine model:
+//   PayGroup ── PayCalendar (cutoff + payment dates) ── PayRun ── Payslip ──
+//                                                                  └─ PayslipLine
+//   Staff ── StaffPayProfile (group, bank, tax, MPF age class, allowances)
+//          ── PayrollLoan ── PayrollLoanInstallment (amortized via payroll)
+//          ── YtdAccumulator (per year, per bucket)
+//          ── TerminationSettlement (final pay: severance/LSP/PILN/leave)
+//
+// All money is `Decimal`; rounding is per tenant.payrollConstant("ROUNDING").
+// Tax and statutory contributions are data-driven (TaxRuleSet + PayrollConstant)
+// so a tenant in a different jurisdiction can re-skin by config alone.
+
+model PayGroup {
+  code            String        @id // e.g. "MONTHLY-HK", "BIWEEKLY-SG"
+  name            String
+  frequency       String // monthly | semimonthly | biweekly | weekly
+  currency        String        @default("HKD")
+  localeCode      String        @default("HK") // drives TaxRuleSet lookup
+  /// Day-of-month the period closes for input edits (1-31; clamped).
+  cutoffDay       Int           @default(25)
+  /// Day-of-month the bank file is released to the bank.
+  paymentDay      Int           @default(28)
+  /// Bank file format identifier (resolves to a BankFileService adapter).
+  bankFileFormat  String        @default("iso20022_pain001")
+  active          Boolean       @default(true)
+  calendars       PayCalendar[]
+  profiles        StaffPayProfile[]
+  runs            PayRun[]
+}
+
+model PayCalendar {
+  id          String   @id @default(cuid())
+  payGroup    PayGroup @relation(fields: [groupCode], references: [code])
+  groupCode   String
+  period      String // YYYY-MM (or YYYY-MM-1/2 for semi-monthly)
+  periodStart DateTime
+  periodEnd   DateTime
+  cutoffAt    DateTime
+  paymentDate DateTime
+  status      String   @default("open") // open | locked | paid
+  createdAt   DateTime @default(now())
+
+  @@unique([groupCode, period])
+  @@index([periodStart])
+}
+
+model PayComponent {
+  code      String  @id
+  nameEn    String
+  nameZh    String?
+  kind      String // earning | deduction | employer | informational
+  /// Earnings classification — whether the amount is taxable + whether it
+  /// counts toward MPF "relevant income".
+  taxable   Boolean @default(true)
+  mpfable   Boolean @default(true)
+  /// Safe expression evaluated by the payroll formula sandbox.
+  formula   String
+  sequence  Int     @default(100)
+  active    Boolean @default(true)
+  /// GL chart-of-account hint; consumed by GlPostingService.
+  glAccount String?
+}
+
+model PayComponentInput {
+  id            String    @id @default(cuid())
+  staffId       String
+  componentCode String
+  amount        Decimal?
+  params        Json?
+  /// recurring (default) | oneoff (consumed and closed after one run)
+  mode          String    @default("recurring")
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  @@index([staffId, componentCode])
+}
+
+model StaffPayProfile {
+  staffId       String   @id
+  payGroup      PayGroup @relation(fields: [groupCode], references: [code])
+  groupCode     String
+  /// "single", "married_separate", "married_joint" (drives tax allowance).
+  taxMaritalStatus String @default("single")
+  /// Count of dependents claimed for tax allowance.
+  dependents    Int      @default(0)
+  /// MPF age class — mandatory(18-64), exempt(<18 or >64), voluntary(65+).
+  mpfClass      String   @default("mandatory")
+  /// Whether employee opts in to voluntary MPF contributions.
+  mpfVoluntary  Boolean  @default(false)
+  /// IRD file no. (HK), or local tax id.
+  taxFileNo     String?
+  /// Optional cost-centre / project for GL allocation.
+  costCenter    String?
+  bankAccount   BankAccount?
+  updatedAt     DateTime @updatedAt
+}
+
+model BankAccount {
+  staffId   String          @id
+  profile   StaffPayProfile @relation(fields: [staffId], references: [staffId])
+  bankCode  String // e.g. "004" (HSBC HK)
+  bankName  String
+  /// Encrypted at rest (see common/crypto). Masked unless pay.read.restricted.
+  accountNoEnc String
+  holderName String
+  currency  String          @default("HKD")
+  isDefault Boolean         @default(true)
+}
+
+model PayrollConstant {
+  key       String   @id // e.g. "MPF_CAP_MONTHLY", "MPF_RATE_EE", "ROUNDING"
+  value     Decimal
+  unit      String?  // "HKD", "%", "days", ...
+  note      String?
+  updatedAt DateTime @updatedAt
+}
+
+model TaxRuleSet {
+  id            String    @id @default(cuid())
+  localeCode    String
+  version       Int       @default(1)
+  /// JSON of shape:
+  ///   { type:"progressive",
+  ///     allowances:{ basic:132000, married:264000, dependent:50000 },
+  ///     brackets:[[50000,0.02],[50000,0.06],[50000,0.10],[null,0.17]],
+  ///     standardRate:0.15 }
+  rules         Json
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  @@index([localeCode, effectiveFrom])
+}
+
+model PayRun {
+  id            String       @id @default(cuid())
+  payGroup      PayGroup     @relation(fields: [groupCode], references: [code])
+  groupCode     String       @default("MONTHLY-HK")
+  period        String // YYYY-MM
+  type          String       @default("regular") // regular | offcycle | bonus | correction | termination
+  status        String       @default("draft") // draft | calculated | approved | paid | reversed
+  runBy         String?
+  approvedBy    String?
+  totalGross    Decimal      @default(0)
+  totalDeductions Decimal    @default(0)
+  totalEmployerCost Decimal  @default(0)
+  totalNet      Decimal      @default(0)
+  totalTax      Decimal      @default(0)
+  headcount     Int          @default(0)
+  paymentDate   DateTime?
+  createdAt     DateTime     @default(now())
+  approvedAt    DateTime?
+  paidAt        DateTime?
+  /// FK to a prior run for correction/reversal traceability.
+  parentRunId   String?
+  parent        PayRun?      @relation("RunHistory", fields: [parentRunId], references: [id])
+  children      PayRun[]     @relation("RunHistory")
+  payslips      Payslip[]
+  exports       PayExport[]
+  glPostings    GlPosting[]
+
+  @@index([period, status])
+  @@index([groupCode, period])
+}
+
+model Payslip {
+  id              String        @id @default(cuid())
+  payRunId        String
+  payRun          PayRun        @relation(fields: [payRunId], references: [id])
+  staffId         String
+  gross           Decimal
+  taxableEarnings Decimal       @default(0)
+  totalDeductions Decimal
+  tax             Decimal       @default(0)
+  mpfEmployee     Decimal       @default(0)
+  mpfEmployer     Decimal       @default(0)
+  employerCost    Decimal
+  net             Decimal
+  currency        String        @default("HKD")
+  /// Calendar / worked days used in pro-ration.
+  calendarDays    Int           @default(0)
+  workedDays      Decimal       @default(0)
+  unpaidLeaveDays Decimal       @default(0)
+  /// Contract type at the time of the run — for audit / per-type reporting.
+  contractType    String        @default("permanent")
+  /// Hours fields populated for hourly contracts (read from Timesheet).
+  regularHours    Decimal       @default(0)
+  otHours         Decimal       @default(0)
+  /// Statutory-holiday days within the period (used for non-monthly staff).
+  statutoryHolidayDays Int      @default(0)
+  /// classification = restricted (net/bank); masked unless pay.read.restricted
+  lines           PayslipLine[]
+  /// Year-to-date snapshot at the moment of run (taxable, tax, mpfEe, mpfEr).
+  ytdSnapshot     Json?
+  /// Period-over-period variance vs the prior approved run, by component code.
+  variance        Json?
+  paymentStatus   String        @default("pending") // pending | sent | settled | failed
+  paymentRef      String?
+  paymentDate     DateTime?
+
+  @@index([payRunId])
+  @@index([staffId])
+}
+
+model PayslipLine {
+  id            String  @id @default(cuid())
+  payslipId     String
+  payslip       Payslip @relation(fields: [payslipId], references: [id], onDelete: Cascade)
+  componentCode String
+  componentName String
+  kind          String // earning | deduction | employer | informational
+  amount        Decimal
+  taxable       Boolean @default(true)
+  mpfable       Boolean @default(true)
+  glAccount     String?
+  sequence      Int     @default(100)
+
+  @@index([payslipId])
+}
+
+model YtdAccumulator {
+  id        String   @id @default(cuid())
+  staffId   String
+  /// Tax year (HK = Apr 1..Mar 31; configurable via PayrollConstant("TAX_YEAR_START_MONTH")).
+  year      Int
+  /// Bucket identifier: TAXABLE | TAX | MPF_EE | MPF_ER | GROSS | NET | OT_HOURS | <componentCode>
+  bucket    String
+  amount    Decimal  @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([staffId, year, bucket])
+  @@index([staffId, year])
+}
+
+model PayrollLoan {
+  id              String                    @id @default(cuid())
+  staffId         String
+  principal       Decimal
+  interestRate    Decimal                   @default(0) // annual, decimal (e.g. 0.04)
+  installments    Int
+  installmentAmount Decimal
+  startPeriod     String // YYYY-MM
+  componentCode   String                    @default("LOAN_REPAY")
+  status          String                    @default("active") // active | paid | written_off | suspended
+  reason          String?
+  createdAt       DateTime                  @default(now())
+  schedule        PayrollLoanInstallment[]
+
+  @@index([staffId, status])
+}
+
+model PayrollLoanInstallment {
+  id           String      @id @default(cuid())
+  loanId       String
+  loan         PayrollLoan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  sequence     Int
+  period       String // YYYY-MM
+  amount       Decimal
+  principalPart Decimal    @default(0)
+  interestPart Decimal     @default(0)
+  status       String      @default("scheduled") // scheduled | deducted | skipped
+  payslipId    String?
+
+  @@unique([loanId, sequence])
+  @@index([period, status])
+}
+
+model TerminationSettlement {
+  id              String   @id @default(cuid())
+  staffId         String
+  exitDate        DateTime
+  reason          String // resignation | dismissal | redundancy | retirement | death
+  /// Months of service (auto-computed from earliest appointment unless overridden).
+  monthsOfService Decimal  @default(0)
+  /// Final monthly base used for severance / LSP basis.
+  lastMonthBase   Decimal  @default(0)
+  /// Settlement parts (HK: severance vs long-service are mutually exclusive).
+  severancePay    Decimal  @default(0)
+  longServicePay  Decimal  @default(0)
+  paymentInLieuNotice Decimal @default(0)
+  accruedLeavePay Decimal  @default(0)
+  proratedSalary  Decimal  @default(0)
+  outstandingLoans Decimal @default(0)
+  totalGross      Decimal  @default(0)
+  totalDeductions Decimal  @default(0)
+  net             Decimal  @default(0)
+  status          String   @default("draft") // draft | approved | paid
+  notes           String?
+  payslipId       String?
+  createdBy       String?
+  createdAt       DateTime @default(now())
+
+  @@index([staffId])
+}
+
+model PayExport {
+  id          String   @id @default(cuid())
+  payRunId    String
+  payRun      PayRun   @relation(fields: [payRunId], references: [id])
+  format      String // iso20022_pain001 | hsbc_csv | bank_local | gl_journal | payslip_pdf
+  fileKey     String
+  /// Inline payload for small artefacts (CSV / XML); large ones live in object storage.
+  payload     String?
+  totalAmount Decimal  @default(0)
+  itemCount   Int      @default(0)
+  generatedBy String?
+  generatedAt DateTime @default(now())
+
+  @@index([payRunId, format])
+}
+
+model GlPosting {
+  id          String   @id @default(cuid())
+  payRunId    String
+  payRun      PayRun   @relation(fields: [payRunId], references: [id])
+  account     String
+  costCenter  String?
+  debit       Decimal  @default(0)
+  credit      Decimal  @default(0)
+  memo        String?
+  createdAt   DateTime @default(now())
+
+  @@index([payRunId])
+}
+
+// ---------- Calendar & work schedule -------------------------------------
+
+model PublicHoliday {
+  id          String   @id @default(cuid())
+  date        DateTime
+  localeCode  String   @default("HK")
+  nameEn      String
+  nameZh      String?
+  /// statutory = one of the 12 HK statutory holidays (must be paid for
+  ///   non-monthly staff under the EO);
+  /// general   = the 17 general/gazetted public holidays (banks closed);
+  /// company   = tenant-specific holiday (e.g., company day off).
+  type        String   @default("general")
+  source      String   @default("manual")
+  createdAt   DateTime @default(now())
+
+  @@unique([date, localeCode, nameEn])
+  @@index([localeCode, date])
+}
+
+model HolidayCalendarSync {
+  id           String   @id @default(cuid())
+  localeCode   String   @unique
+  sourceUrl    String
+  lastSyncAt   DateTime?
+  lastHash     String?
+  itemCount    Int      @default(0)
+  status       String   @default("ok") // ok | failed
+  errorMessage String?
+}
+
+/// Default work-week pattern per pay group. 7 booleans for Sun..Sat.
+/// Used by hourly/daily proration and to identify weekends for OT premium.
+model WorkSchedule {
+  groupCode    String  @id
+  /// Bitmap: index 0=Sunday .. 6=Saturday. true = working day.
+  workingDays  Boolean[]
+  hoursPerDay  Decimal @default(8)
+  /// If true, statutory holidays falling on a working day are PAID for
+  /// non-monthly staff (HK law: 12 SH days/year).
+  payStatutoryHolidays Boolean @default(true)
+  /// Multiplier for overtime worked on a regular working day.
+  otMultiplier         Decimal @default(1.5)
+  /// Multiplier for overtime / work on rest days + statutory holidays.
+  restDayMultiplier    Decimal @default(2.0)
+}
+
+// ---------- Timesheets ---------------------------------------------------
+
+model Timesheet {
+  id          String           @id @default(cuid())
+  staffId     String
+  period      String // YYYY-MM
+  status      String           @default("draft") // draft | submitted | approved
+  totalHours  Decimal          @default(0)
+  regularHours Decimal         @default(0)
+  ot15Hours   Decimal          @default(0)
+  ot20Hours   Decimal          @default(0)
+  daysWorked  Decimal          @default(0)
+  submittedAt DateTime?
+  approvedBy  String?
+  approvedAt  DateTime?
+  entries     TimesheetEntry[]
+
+  @@unique([staffId, period])
+  @@index([period, status])
+}
+
+model TimesheetEntry {
+  id          String    @id @default(cuid())
+  timesheetId String
+  timesheet   Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  date        DateTime
+  hours       Decimal
+  /// regular | ot15 | ot20 | rest_day_work | holiday_work
+  kind        String    @default("regular")
+  note        String?
+
+  @@index([timesheetId, date])
+}
+
+model IR56Filing {
+  id          String   @id @default(cuid())
+  /// IR56B (annual) | IR56E (new hire) | IR56F (departing) | IR56G (departing leaving HK)
+  formType    String
+  taxYear     Int
+  staffId     String?
+  /// Rendered XML/PDF payload (kept for re-issue & retention).
+  payload     Json
+  status      String   @default("draft") // draft | submitted
+  submittedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([taxYear, formType])
+}
+
+// ---------- Leave & Attendance (lve) ----------
+
+model LeaveType {
+  code           String  @id
+  nameEn         String
+  nameZh         String?
+  annualQuota    Float   @default(0)
+  paid           Boolean @default(true)
+  requiresReason Boolean @default(false)
+  active         Boolean @default(true)
+}
+
+model LeaveRequest {
+  id            String   @id @default(cuid())
+  staffId       String
+  leaveTypeCode String
+  startDate     DateTime
+  endDate       DateTime
+  days          Float
+  status        String   @default("pending") // pending|approved|rejected|cancelled
+  reason        String?
+  decidedBy     String?
+  decidedNote   String?
+  decidedAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([staffId, status])
+  @@index([status])
+}
+
+/// Optional manual accrual/adjustment ledger (carry-forward, TOIL, etc.).
+model LeaveLedger {
+  id            String   @id @default(cuid())
+  staffId       String
+  leaveTypeCode String
+  year          Int
+  delta         Float
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@index([staffId, leaveTypeCode, year])
+}
+
+// ---------- Posting / Job Change (pom) ----------
+
+/// A posting action (transfer/acting/promotion/reversion). When applied it
+/// supersedes the staff's effective-dated StaffAppointment row(s); full
+/// history is preserved (UR-POM-001..003).
+model PostingAction {
+  id            String    @id @default(cuid())
+  staffId       String
+  type          String // transfer | acting | promotion | reversion
+  fromPostId    String?
+  toPostId      String?
+  rankCode      String?
+  effectiveFrom DateTime
+  effectiveTo   DateTime? // acting end (auto-reversion)
+  status        String    @default("pending") // pending | applied | cancelled
+  reason        String?
+  processedAt   DateTime?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, effectiveFrom])
+  @@index([staffId])
+}
+
+// ---------- Performance Management (pem) ----------
+
+model AppraisalCycle {
+  id         String            @id @default(cuid())
+  name       String
+  periodYear Int
+  ratingMin  Int               @default(1)
+  ratingMax  Int               @default(5)
+  sections   String[]
+  status     String            @default("draft") // draft | open | closed
+  createdAt  DateTime          @default(now())
+  reports    AppraisalReport[]
+}
+
+model AppraisalReport {
+  id                String         @id @default(cuid())
+  cycleId           String
+  cycle             AppraisalCycle @relation(fields: [cycleId], references: [id])
+  staffId           String
+  appraiserUserId   String?
+  status            String         @default("pending") // pending|self_done|appraised|finalised
+  selfComments      String?
+  selfScores        Json?
+  appraiserComments String?
+  scores            Json?
+  overallRating     Float?
+  finalisedAt       DateTime?
+  createdAt         DateTime       @default(now())
+
+  @@unique([cycleId, staffId])
+  @@index([staffId, status])
+}
+
+// ---------- Training & Learning (trm) ----------
+
+model Course {
+  code                   String          @id
+  title                  String
+  description            String?
+  durationDays           Float           @default(1)
+  organiser              String?
+  certificateType        String?
+  certificateValidMonths Int             @default(0)
+  active                 Boolean         @default(true)
+  sessions               CourseSession[]
+}
+
+model CourseSession {
+  id         String      @id @default(cuid())
+  courseCode String
+  course     Course      @relation(fields: [courseCode], references: [code])
+  startDate  DateTime
+  endDate    DateTime
+  location   String?
+  capacity   Int         @default(20)
+  enrolments Enrolment[]
+
+  @@index([startDate, endDate])
+}
+
+model Enrolment {
+  id                    String        @id @default(cuid())
+  sessionId             String
+  session               CourseSession @relation(fields: [sessionId], references: [id])
+  staffId               String
+  status                String        @default("nominated") // nominated|confirmed|attended|absent|failed|cancelled
+  score                 Float?
+  completionDate        DateTime?
+  certificateValidUntil DateTime?
+  reason                String?
+  createdAt             DateTime      @default(now())
+
+  @@unique([sessionId, staffId])
+  @@index([staffId, status])
+}
+
+// ---------- Honours & Awards / Recognition (ham) ----------
+
+model AwardType {
+  code     String  @id
+  nameEn   String
+  nameZh   String?
+  kind     String // medal | travel | lsi | recognition
+  lsiYears Int?
+  active   Boolean @default(true)
+  awards   Award[]
+}
+
+model Award {
+  id            String    @id @default(cuid())
+  staffId       String
+  awardTypeCode String
+  awardType     AwardType @relation(fields: [awardTypeCode], references: [code])
+  awardedOn     DateTime
+  citation      String?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([staffId])
+  @@index([awardTypeCode, awardedOn])
+}
+
+// ---------- Conduct & Discipline / Matter-of-Importance (cdm) ----------
+
+model CdmCase {
+  id             String        @id @default(cuid())
+  staffId        String
+  kind           String // warning|disciplinary|complaint|integrity|injury|interdiction|bankruptcy|court|police
+  summary        String
+  occurredOn     DateTime
+  status         String        @default("open") // open | closed
+  classification String        @default("restricted") // internal | restricted
+  openedBy       String?
+  closedBy       String?
+  closedAt       DateTime?
+  createdAt      DateTime      @default(now())
+  notes          CdmCaseNote[]
+
+  @@index([staffId, status])
+  @@index([kind, status])
+}
+
+model CdmCaseNote {
+  id        String   @id @default(cuid())
+  caseId    String
+  case      CdmCase  @relation(fields: [caseId], references: [id])
+  byUserId  String
+  note      String
+  createdAt DateTime @default(now())
+
+  @@index([caseId, createdAt])
+}
+
+// ---------- Exit / Offboarding (exm) ----------
+
+model ExitRecord {
+  id             String    @id @default(cuid())
+  staffId        String
+  reason         String // ExitReason enum (string)
+  effectiveDate  DateTime
+  status         String    @default("pending") // pending | applied | cancelled
+  interviewNotes String?
+  createdBy      String?
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([status, effectiveDate])
+  @@index([staffId])
+}
+
+// ---------- Benefits (hbm) ----------
+
+model BenefitType {
+  code          String             @id
+  nameEn        String
+  nameZh        String?
+  category      String // housing | medical | transport | allowance | loan | insurance
+  chargeable    Boolean            @default(false)
+  monthlyAmount Decimal            @default(0)
+  active        Boolean            @default(true)
+  enrolments    BenefitEnrolment[]
+}
+
+model BenefitEnrolment {
+  id              String      @id @default(cuid())
+  staffId         String
+  benefitTypeCode String
+  benefitType     BenefitType @relation(fields: [benefitTypeCode], references: [code])
+  monthlyAmount   Decimal?    // override of type default
+  params          Json?       // e.g. { quarterCode, addressLine }
+  effectiveFrom   DateTime
+  effectiveTo     DateTime?
+
+  @@index([staffId])
+  @@index([benefitTypeCode, effectiveFrom])
+}
+
+model BenefitInvoice {
+  id        String   @id @default(cuid())
+  staffId   String
+  period    String // YYYY-MM
+  total     Decimal
+  /// [{ benefitTypeCode, benefitTypeName, amount }]
+  lines     Json
+  status    String   @default("open") // open | paid | overdue | cancelled
+  dueDate   DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([staffId, period])
+  @@index([period, status])
+}
+
+// ---------- Recruitment / ATS (rec) ----------
+
+model JobOpening {
+  code         String        @id
+  title        String
+  orgUnitId    String?
+  rankCode     String?
+  openings     Int           @default(1)
+  description  String?
+  status       String        @default("draft") // draft|open|on_hold|closed
+  createdAt    DateTime      @default(now())
+  applications Application[]
+}
+
+model Candidate {
+  id           String        @id @default(cuid())
+  firstName    String
+  lastName     String
+  email        String        @unique
+  phone        String?
+  source       String?
+  createdAt    DateTime      @default(now())
+  applications Application[]
+}
+
+model Application {
+  id              String      @id @default(cuid())
+  jobCode         String
+  job             JobOpening  @relation(fields: [jobCode], references: [code])
+  candidateId     String
+  candidate       Candidate   @relation(fields: [candidateId], references: [id])
+  stage           String      @default("applied") // applied|screened|interview|offer|hired|rejected|withdrawn
+  rejectionReason String?
+  appliedAt       DateTime    @default(now())
+  hiredStaffId    String?
+  interviews      Interview[]
+  offers          Offer[]
+
+  @@unique([jobCode, candidateId])
+  @@index([stage])
+}
+
+model Interview {
+  id                String      @id @default(cuid())
+  applicationId     String
+  application       Application @relation(fields: [applicationId], references: [id])
+  scheduledAt       DateTime
+  interviewerUserId String
+  mode              String      @default("onsite")
+  notes             String?
+  score             Int?
+}
+
+model Offer {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  salaryAmount  Decimal
+  startDate     DateTime
+  status        String      @default("pending") // pending|accepted|declined
+  decidedAt     DateTime?
+}
