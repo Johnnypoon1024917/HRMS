@@ -91,68 +91,87 @@ export class PomService {
     });
 
     for (const a of due) {
-      const open = await db.staffAppointment.findFirst({
-        where: { staffId: a.staffId, ...currentWhere(a.effectiveFrom) },
-        orderBy: { effectiveFrom: 'desc' },
-      });
-      const { closePrevious, newFrom } = supersede(a.effectiveFrom);
-
-      if (a.type === 'transfer' || a.type === 'promotion') {
-        if (open) {
-          await db.staffAppointment.update({
-            where: { id: open.id },
-            data: closePrevious,
-          });
-        }
-        await db.staffAppointment.create({
-          data: {
-            staffId: a.staffId,
-            postId: a.toPostId ?? open?.postId ?? null,
-            rankCode: a.rankCode ?? open?.rankCode ?? 'UNK',
-            basis: 'substantive',
-            effectiveFrom: newFrom,
-          },
+      // Each action performs 2–4 writes (close prior appointment, open new one,
+      // flip post statuses, mark the action applied). Wrap them in a single
+      // interactive transaction so a mid-action failure rolls back fully rather
+      // than leaving a half-applied posting (e.g. new appointment created but
+      // the source post never freed).
+      await db.$transaction(async (tx) => {
+        const open = await tx.staffAppointment.findFirst({
+          where: { staffId: a.staffId, ...currentWhere(a.effectiveFrom) },
+          orderBy: { effectiveFrom: 'desc' },
         });
-        if (a.toPostId) {
-          await db.post.update({
-            where: { id: a.toPostId },
-            data: { status: 'filled' },
+        const { closePrevious, newFrom } = supersede(a.effectiveFrom);
+
+        if (a.type === 'transfer' || a.type === 'promotion') {
+          if (open) {
+            await tx.staffAppointment.update({
+              where: { id: open.id },
+              data: closePrevious,
+            });
+          }
+          await tx.staffAppointment.create({
+            data: {
+              staffId: a.staffId,
+              postId: a.toPostId ?? open?.postId ?? null,
+              rankCode: a.rankCode ?? open?.rankCode ?? 'UNK',
+              basis: 'substantive',
+              effectiveFrom: newFrom,
+            },
           });
-        }
-        if (a.fromPostId && a.type === 'transfer') {
-          await db.post.update({
-            where: { id: a.fromPostId },
-            data: { status: 'vacant' },
+          if (a.toPostId) {
+            await tx.post.update({
+              where: { id: a.toPostId },
+              data: { status: 'filled' },
+            });
+          }
+          if (a.fromPostId && a.type === 'transfer') {
+            await tx.post.update({
+              where: { id: a.fromPostId },
+              data: { status: 'vacant' },
+            });
+          }
+        } else if (a.type === 'acting') {
+          // Acting runs alongside the substantive appointment, time-boxed.
+          await tx.staffAppointment.create({
+            data: {
+              staffId: a.staffId,
+              postId: a.toPostId ?? null,
+              rankCode: a.rankCode ?? open?.rankCode ?? 'UNK',
+              basis: 'acting',
+              effectiveFrom: a.effectiveFrom,
+              effectiveTo: a.effectiveTo,
+            },
           });
-        }
-      } else if (a.type === 'acting') {
-        // Acting runs alongside the substantive appointment, time-boxed.
-        await db.staffAppointment.create({
-          data: {
+        } else if (a.type === 'reversion') {
+          // End the SPECIFIC open acting appointment being reverted. A staff
+          // member may act in several roles at once, so match on the action's
+          // target post (or rank) instead of grabbing an arbitrary `findFirst`;
+          // order deterministically as a final tiebreaker.
+          const where: any = {
             staffId: a.staffId,
-            postId: a.toPostId ?? null,
-            rankCode: a.rankCode ?? open?.rankCode ?? 'UNK',
             basis: 'acting',
-            effectiveFrom: a.effectiveFrom,
-            effectiveTo: a.effectiveTo,
-          },
-        });
-      } else if (a.type === 'reversion') {
-        // End any open acting appointment.
-        const acting = await db.staffAppointment.findFirst({
-          where: { staffId: a.staffId, basis: 'acting', effectiveTo: null },
-        });
-        if (acting) {
-          await db.staffAppointment.update({
-            where: { id: acting.id },
-            data: { effectiveTo: a.effectiveFrom },
+            effectiveTo: null,
+          };
+          const revertPostId = a.toPostId ?? a.fromPostId;
+          if (revertPostId) where.postId = revertPostId;
+          if (a.rankCode) where.rankCode = a.rankCode;
+          const acting = await tx.staffAppointment.findFirst({
+            where,
+            orderBy: { effectiveFrom: 'desc' },
           });
+          if (acting) {
+            await tx.staffAppointment.update({
+              where: { id: acting.id },
+              data: { effectiveTo: a.effectiveFrom },
+            });
+          }
         }
-      }
 
-      await db.postingAction.update({
-        where: { id: a.id },
-        data: { status: 'applied', processedAt: today },
+        await tx.postingAction.update({
+          where: { id: a.id },
+          data: { status: 'applied', processedAt: today },
+        });
       });
     }
     return { processed: due.length };

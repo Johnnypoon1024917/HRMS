@@ -131,63 +131,73 @@ export class EsmService {
   /** Daily Establishment & Strength snapshot for historical enquiry. */
   async snapshotEs(date = new Date()) {
     const db = this.tp.forCurrentTenant();
-    const units = await db.orgUnit.findMany();
-    for (const u of units) {
-      const posts = await db.post.findMany({
-        where: { orgUnitId: u.id, ...currentWhere(date) },
-      });
-      const byRank = new Map<string, { est: number; str: number }>();
-      for (const p of posts) {
-        const k = p.rankCode;
-        const acc = byRank.get(k) ?? { est: 0, str: 0 };
-        acc.est += 1;
-        if (p.status === 'filled') acc.str += 1;
-        byRank.set(k, acc);
-      }
-      for (const [rankCode, v] of byRank) {
-        await db.esSnapshot.upsert({
-          where: {
-            snapshotDate_orgUnitId_rankCode: {
-              snapshotDate: date,
-              orgUnitId: u.id,
-              rankCode,
-            },
-          },
-          create: {
-            snapshotDate: date,
-            orgUnitId: u.id,
-            rankCode,
-            establishment: v.est,
-            strength: v.str,
-          },
-          update: { establishment: v.est, strength: v.str },
-        });
-      }
+    // Single query for every current post, aggregated in memory. The previous
+    // implementation issued 1 + units + (units x ranks) sequential queries
+    // (10k+ for a large establishment), making the daily batch time out.
+    const posts = await db.post.findMany({ where: { ...currentWhere(date) } });
+
+    const agg = new Map<
+      string,
+      { orgUnitId: string; rankCode: string; est: number; str: number }
+    >();
+    for (const p of posts) {
+      const key = `${p.orgUnitId} ${p.rankCode}`;
+      const acc =
+        agg.get(key) ?? { orgUnitId: p.orgUnitId, rankCode: p.rankCode, est: 0, str: 0 };
+      acc.est += 1;
+      if (p.status === 'filled') acc.str += 1;
+      agg.set(key, acc);
     }
+    const data = [...agg.values()].map((v) => ({
+      snapshotDate: date,
+      orgUnitId: v.orgUnitId,
+      rankCode: v.rankCode,
+      establishment: v.est,
+      strength: v.str,
+    }));
+
+    // Replace the day's snapshot atomically: delete + bulk insert (Prisma has
+    // no bulk upsert). Idempotent, so re-running for the same date is safe.
+    await db.$transaction([
+      db.esSnapshot.deleteMany({ where: { snapshotDate: date } }),
+      db.esSnapshot.createMany({ data }),
+    ]);
   }
 
   /** Org chart tree with E&S figures (UR-ESM-003 / UR-ORM-001). */
   async orgChart(rootId?: string): Promise<OrgChartNode[]> {
     const db = this.tp.forCurrentTenant();
     const units = await db.orgUnit.findMany({ include: { posts: true } });
-    const figure = (uid: string) => {
+    // Posts directly attached to a single unit node.
+    const ownFigure = (uid: string) => {
       const posts = units.find((u) => u.id === uid)?.posts ?? [];
       return {
         establishment: posts.length,
         strength: posts.filter((p) => p.status === 'filled').length,
       };
     };
+    // Each node's figures roll up its own posts PLUS every descendant's, so a
+    // parent (e.g. Headquarters) shows the total establishment/strength of the
+    // whole subtree, not just posts pinned directly to that node.
     const build = (parentId: string | null): OrgChartNode[] =>
       units
         .filter((u) => u.parentId === parentId)
-        .map((u) => ({
-          id: u.id,
-          code: u.code,
-          name: u.nameEn,
-          type: u.type as any,
-          ...figure(u.id),
-          children: build(u.id),
-        }));
+        .map((u) => {
+          const children = build(u.id);
+          const self = ownFigure(u.id);
+          return {
+            id: u.id,
+            code: u.code,
+            name: u.nameEn,
+            type: u.type as any,
+            establishment:
+              self.establishment +
+              children.reduce((s, c) => s + c.establishment, 0),
+            strength:
+              self.strength + children.reduce((s, c) => s + c.strength, 0),
+            children,
+          };
+        });
     return build(rootId ?? null);
   }
 }

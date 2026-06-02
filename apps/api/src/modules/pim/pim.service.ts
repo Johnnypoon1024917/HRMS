@@ -7,6 +7,9 @@ import {
   StaffUpsert,
 } from '@hrms/contracts';
 import * as ExcelJS from 'exceljs';
+import { promises as fs } from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { TenantPrismaService } from '../../common/prisma/tenant-prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { asOfDate, currentWhere } from '../../common/effective-dating/effective';
@@ -59,7 +62,7 @@ export class PimService {
     const [rows, total] = await Promise.all([
       db.staff.findMany({
         where,
-        skip: (q.page - 1) * q.pageSize,
+        skip: Math.max(0, q.page - 1) * q.pageSize,
         take: q.pageSize,
         orderBy: { staffNo: 'asc' },
         include: {
@@ -154,14 +157,17 @@ export class PimService {
     ws.eachRow((r, i) => {
       if (i === 1) return; // header
       try {
+        // `.text` (not `.value`) resolves formulas and rich-text cells to their
+        // string representation; `.value` can be an object (e.g. { richText }
+        // or { formula, result }) that would serialise to "[object Object]".
         const data = {
-          staffNo: String(r.getCell(1).value ?? '').trim(),
-          nameEn: String(r.getCell(2).value ?? '').trim(),
-          nameZh: String(r.getCell(3).value ?? '').trim() || undefined,
-          sex: String(r.getCell(4).value ?? '').trim(),
-          dob: String(r.getCell(5).value ?? '').trim(),
-          idType: String(r.getCell(6).value ?? '').trim(),
-          idNo: String(r.getCell(7).value ?? '').trim(),
+          staffNo: r.getCell(1).text.trim(),
+          nameEn: r.getCell(2).text.trim(),
+          nameZh: r.getCell(3).text.trim() || undefined,
+          sex: r.getCell(4).text.trim(),
+          dob: r.getCell(5).text.trim(),
+          idType: r.getCell(6).text.trim(),
+          idNo: r.getCell(7).text.trim(),
           classification: 'internal',
           status: 'active',
         } as StaffUpsert;
@@ -191,8 +197,14 @@ export class PimService {
       errors.forEach((e) => sheet.addRow([e.row, e.error]));
       const buf = await out.xlsx.writeBuffer();
       const key = `exception-${batch.id}.xlsx`;
-      // In production this is stored in object storage; key returned for download.
-      (globalThis as any).__lastExceptionReport = Buffer.from(buf as any);
+      // Persist per-batch to the OS temp dir keyed by batch id. The previous
+      // `globalThis.__lastExceptionReport = buffer` held report buffers in
+      // process memory (unbounded → OOM) and was overwritten by any concurrent
+      // import (Admin B clobbering Admin A's report). A per-batch file removes
+      // both the leak and the race; production swaps this for object storage.
+      const dir = path.join(os.tmpdir(), 'hrms-import-exceptions');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, key), Buffer.from(buf as any));
       await db.staffImportBatch.update({
         where: { id: batch.id },
         data: { exceptionFileKey: key },

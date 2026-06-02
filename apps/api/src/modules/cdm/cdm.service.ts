@@ -37,10 +37,14 @@ export class CdmService {
     if (filters.status) where.AND.push({ status: filters.status });
     if (filters.kind) where.AND.push({ kind: filters.kind });
 
-    // Data scope: restrict to staff in caller's org-unit subtree.
+    // Data scope: restrict to staff in caller's org-unit subtree. Expressed as
+    // a relational subquery so the join runs in the database — the previous
+    // approach pulled every in-scope staff id into Node and passed them as
+    // bound parameters in an IN (...) clause, which blows the driver's
+    // parameter limit (and balloons memory) for large institutions.
     if (access.scopeUnits) {
-      const staff = await db.staff.findMany({
-        where: {
+      where.AND.push({
+        staff: {
           appointments: {
             some: {
               ...currentWhere(),
@@ -48,9 +52,7 @@ export class CdmService {
             },
           },
         },
-        select: { id: true },
       });
-      where.AND.push({ staffId: { in: staff.map((s) => s.id) } });
     }
 
     const rows = await db.cdmCase.findMany({
@@ -65,23 +67,26 @@ export class CdmService {
     const sMap = new Map(staff.map((s) => [s.id, s]));
 
     const canRestricted = access.permissions.has('cdm.read.restricted');
-    return rows.map((r) => ({
+    return rows.map((r) => {
+      const masked = r.classification === 'restricted' && !canRestricted;
+      return {
       id: r.id,
       staffId: r.staffId,
-      staffNo: sMap.get(r.staffId)?.staffNo,
-      staffName: sMap.get(r.staffId)?.nameEn,
+      // On restricted cases the subject's identity is masked too, not just the
+      // summary — surfacing the name would reveal that a specific person is the
+      // subject of a restricted matter (UR-GEN-004 least-exposure).
+      staffNo: masked ? undefined : sMap.get(r.staffId)?.staffNo,
+      staffName: masked ? undefined : sMap.get(r.staffId)?.nameEn,
       kind: r.kind as any,
       // Restricted cases collapse to a placeholder summary unless permitted.
-      summary:
-        r.classification === 'restricted' && !canRestricted
-          ? '(restricted)'
-          : r.summary,
+      summary: masked ? '(restricted)' : r.summary,
       occurredOn: r.occurredOn.toISOString().slice(0, 10),
       status: r.status as any,
       classification: r.classification as any,
       openedBy: r.openedBy ?? undefined,
       closedAt: r.closedAt?.toISOString(),
-    }));
+      };
+    });
   }
 
   async create(input: CaseUpsert, userId: string) {

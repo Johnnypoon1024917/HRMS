@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
@@ -38,66 +38,85 @@ const columns: GridColDef[] = [
  *  Rows link to the entity-centric Employee Profile (Principle 1). */
 export default function StaffPage() {
   const router = useRouter();
-  const [name, setName] = useState('');
-  const [staffNo, setStaffNo] = useState('');
+  // `input` updates on every keystroke; `query` is the debounced value that
+  // actually drives the server fetch. Keeping them separate means typing no
+  // longer fires a request (or reloads the grid) on each character.
+  const [input, setInput] = useState({ name: '', staffNo: '' });
+  const [query, setQuery] = useState({ name: '', staffNo: '' });
   const [rows, setRows] = useState<StaffListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const load = () => {
+  // Debounce input → query, resetting to the first page on a new search.
+  useEffect(() => {
+    const h = setTimeout(() => {
+      setQuery(input);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(h);
+  }, [input]);
+
+  // The single source of truth for fetching: committed query + page. Replaces
+  // the old eslint-disabled effect whose `load()` closed over stale state.
+  useEffect(() => {
+    let active = true;
     setLoading(true);
     const qs = new URLSearchParams({
       page: String(page + 1),
       pageSize: '25',
-      ...(name ? { name } : {}),
-      ...(staffNo ? { staffNo } : {}),
+      ...(query.name ? { name: query.name } : {}),
+      ...(query.staffNo ? { staffNo: query.staffNo } : {}),
     });
     api<Paged<StaffListItem>>(`/pim/staff?${qs}`)
       .then((r) => {
+        if (!active) return;
         setRows(r.items);
         setTotal(r.total);
       })
-      .finally(() => setLoading(false));
-  };
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, [page, query]);
 
-  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Memoised so re-renders triggered by the search inputs don't re-render the
+  // (expensive) grid — only row/page/loading changes rebuild it.
+  const grid = useMemo(
+    () => (
+      <DataGrid
+        rows={rows}
+        columns={columns}
+        loading={loading}
+        paginationMode="server"
+        rowCount={total}
+        paginationModel={{ page, pageSize: 25 }}
+        onPaginationModelChange={(m) => setPage(m.page)}
+        pageSizeOptions={[25]}
+        onRowClick={(p) => router.push(`/pim/staff/${p.id}`)}
+        sx={{ '& .MuiDataGrid-row': { cursor: 'pointer' } }}
+      />
+    ),
+    [rows, total, page, loading, router],
+  );
 
   return (
     <Box>
       <PageHeader
         title="Personnel"
         subtitle="Search staff, then open a profile to view or edit."
-        primary={{ label: 'Search', icon: 'search', onClick: () => { setPage(0); load(); } }}
       />
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField
-            size="small" label="Name" value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && (setPage(0), load())}
+            size="small" label="Name" value={input.name}
+            onChange={(e) => setInput((s) => ({ ...s, name: e.target.value }))}
           />
           <TextField
-            size="small" label="Staff No." value={staffNo}
-            onChange={(e) => setStaffNo(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && (setPage(0), load())}
+            size="small" label="Staff No." value={input.staffNo}
+            onChange={(e) => setInput((s) => ({ ...s, staffNo: e.target.value }))}
           />
         </Stack>
       </Paper>
-      <div style={{ height: 560, width: '100%' }}>
-        <DataGrid
-          rows={rows}
-          columns={columns}
-          loading={loading}
-          paginationMode="server"
-          rowCount={total}
-          paginationModel={{ page, pageSize: 25 }}
-          onPaginationModelChange={(m) => setPage(m.page)}
-          pageSizeOptions={[25]}
-          onRowClick={(p) => router.push(`/pim/staff/${p.id}`)}
-          sx={{ '& .MuiDataGrid-row': { cursor: 'pointer' } }}
-        />
-      </div>
+      <div style={{ height: 560, width: '100%' }}>{grid}</div>
     </Box>
   );
 }

@@ -5,8 +5,8 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   MenuItem,
-  Paper,
   Stack,
   TextField,
   Typography,
@@ -58,21 +58,25 @@ const emptyForm = {
 export default function CdmCasesPage() {
   const notify = useNotify();
   const [rows, setRows] = useState<CaseView[]>([]);
+  const [loadingRows, setLoadingRows] = useState(false);
   const [filter, setFilter] = useState({ kind: '', status: '' });
   const [f, setF] = useState(emptyForm);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState<CaseView | null>(null);
   const [notes, setNotes] = useState<CaseNoteView[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
   const [newNote, setNewNote] = useState('');
 
   const load = () => {
     const qs = new URLSearchParams();
     if (filter.kind) qs.set('kind', filter.kind);
     if (filter.status) qs.set('status', filter.status);
+    setLoadingRows(true);
     api<CaseView[]>(`/cdm/cases${qs.toString() ? '?' + qs : ''}`)
       .then(setRows)
-      .catch((e: any) => notify.error(e.message));
+      .catch((e: any) => notify.error(e.message))
+      .finally(() => setLoadingRows(false));
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -97,10 +101,14 @@ export default function CdmCasesPage() {
 
   const openCase = async (c: CaseView) => {
     setOpen(c);
+    setNotes([]);
+    setNotesLoading(true);
     try {
       setNotes(await api<CaseNoteView[]>(`/cdm/cases/${c.id}/notes`));
     } catch (e: any) {
       notify.error(e.message);
+    } finally {
+      setNotesLoading(false);
     }
   };
 
@@ -152,46 +160,53 @@ export default function CdmCasesPage() {
       </Stack>
 
       <div style={{ height: 420, width: '100%' }}>
-        <DataGrid rows={rows} columns={cols} disableRowSelectionOnClick
+        <DataGrid rows={rows} columns={cols} loading={loadingRows}
+          disableRowSelectionOnClick
           onRowClick={(p) => openCase(p.row as CaseView)} />
       </div>
 
-      {open && (
-        <Paper variant="outlined" sx={{ p: 2, mt: 3 }}>
-          <Stack direction="row" alignItems="center" spacing={2} mb={2}>
-            <Typography fontWeight={600} flexGrow={1}>
-              {open.kind.toUpperCase()} · {open.staffName ?? open.staffId} · {open.occurredOn}
-            </Typography>
-            {open.status === 'open' && (
-              <Button size="small" variant="outlined" color="success" onClick={closeCase}>
-                Close case
-              </Button>
-            )}
-            <Button size="small" onClick={() => setOpen(null)}>Hide</Button>
-          </Stack>
-          <Typography variant="body2" color="text.secondary" mb={2}>
-            {open.summary}
-          </Typography>
-          <Stack spacing={1} mb={2}>
-            {notes.length === 0 && (
-              <Typography variant="body2" color="text.secondary">No notes yet.</Typography>
-            )}
-            {notes.map((n) => (
+      {/* Detail lives in a right-hand drawer (same component as create) rather
+          than a Paper rendered below a fixed-height grid, which sat below the
+          fold on a 1080p laptop and read as "nothing happened" on row click. */}
+      <CrudDrawer
+        open={!!open}
+        title={open ? `${open.kind.toUpperCase()} case` : ''}
+        subtitle={open ? `${open.staffName ?? open.staffId} · ${open.occurredOn}` : undefined}
+        onClose={() => setOpen(null)}
+        onSubmit={closeCase}
+        submitLabel="Close case"
+        submitDisabled={!open || open.status !== 'open'}
+      >
+        <Typography variant="body2" color="text.secondary">
+          {open?.summary}
+        </Typography>
+        <Stack spacing={1}>
+          {notesLoading ? (
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <CircularProgress size={16} />
+              <Typography variant="body2" color="text.secondary">Loading notes…</Typography>
+            </Stack>
+          ) : notes.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">No notes yet.</Typography>
+          ) : (
+            notes.map((n) => (
               <Box key={n.id} sx={{ borderLeft: '3px solid', borderColor: 'divider', pl: 1.5 }}>
                 <Typography variant="caption" color="text.secondary">
                   {new Date(n.at).toLocaleString()} · {n.byUserId}
                 </Typography>
                 <Typography variant="body2">{n.note}</Typography>
               </Box>
-            ))}
-          </Stack>
-          <Stack direction="row" spacing={1}>
-            <TextField size="small" fullWidth placeholder="Add note…"
-              value={newNote} onChange={(e) => setNewNote(e.target.value)} />
-            <Button variant="contained" onClick={addNote}>Add</Button>
-          </Stack>
-        </Paper>
-      )}
+            ))
+          )}
+        </Stack>
+        <Stack direction="row" spacing={1}>
+          <TextField size="small" fullWidth placeholder="Add note…"
+            value={newNote} onChange={(e) => setNewNote(e.target.value)} />
+          {/* type="button": the drawer wraps children in a <form> whose implicit
+              submit is "Close case" — without this, adding a note would close. */}
+          <Button type="button" variant="contained" onClick={addNote}>Add</Button>
+        </Stack>
+      </CrudDrawer>
 
       <CrudDrawer
         open={drawerOpen}

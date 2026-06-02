@@ -152,6 +152,7 @@ model Staff {
   salaries       StaffSalary[]
   qualifications StaffQualification[]
   documents      StaffDocument[]
+  cdmCases       CdmCase[]
 
   @@index([nameEn])
   @@index([status])
@@ -871,6 +872,7 @@ model Award {
 model CdmCase {
   id             String        @id @default(cuid())
   staffId        String
+  staff          Staff         @relation(fields: [staffId], references: [id])
   kind           String // warning|disciplinary|complaint|integrity|injury|interdiction|bankruptcy|court|police
   summary        String
   occurredOn     DateTime
