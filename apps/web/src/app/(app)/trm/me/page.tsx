@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Box, Chip, Typography } from '@mui/material';
+import { Box, Chip } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { MyTrainingEntry } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const statusColor = (s: string) =>
   s === 'attended'
@@ -33,15 +35,16 @@ const cols: GridColDef[] = [
 ];
 
 export default function MyTrainingPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<MyTrainingEntry[]>([]);
   useEffect(() => {
-    api<MyTrainingEntry[]>('/trm/me').then(setRows);
-  }, []);
+    api<MyTrainingEntry[]>('/trm/me')
+      .then(setRows)
+      .catch((e: any) => notify.error(e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        My Training
-      </Typography>
+      <PageHeader title="My Training" />
       <div style={{ height: 540, width: '100%' }}>
         <DataGrid
           rows={rows.map((r) => ({ id: r.enrolmentId, ...r }))}

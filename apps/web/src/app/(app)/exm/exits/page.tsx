@@ -1,20 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  MenuItem,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Chip, MenuItem, TextField } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { ExitView } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { StaffPicker } from '@/components/inputs/StaffPicker';
+import { useNotify } from '@/components/feedback/Notify';
+import { useDialogs } from '@/components/feedback/Confirm';
 
 const REASONS = [
   'retirement', 'compulsory_retirement', 'dismissal', 'invaliding',
@@ -36,77 +31,89 @@ const cols: GridColDef[] = [
   },
 ];
 
+const emptyForm = {
+  staffId: '',
+  reason: 'retirement',
+  effectiveDate: '',
+  interviewNotes: '',
+};
+
 /** Exit / offboarding records (UR-EXM-002): pending → applied via batch. */
 export default function ExitsPage() {
+  const notify = useNotify();
+  const { confirm } = useDialogs();
   const [rows, setRows] = useState<ExitView[]>([]);
-  const [f, setF] = useState({
-    staffId: '',
-    reason: 'retirement',
-    effectiveDate: '',
-    interviewNotes: '',
-  });
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [f, setF] = useState(emptyForm);
 
-  const load = () => api<ExitView[]>('/exm/exits').then(setRows);
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      setRows(await api<ExitView[]>('/exm/exits'));
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openDrawer = () => { setF(emptyForm); setOpen(true); };
 
   const create = async () => {
-    setErr('');
+    setSaving(true);
     try {
       await api('/exm/exits', { method: 'POST', body: JSON.stringify(f) });
-      setMsg('Exit record queued.');
-      setF({ ...f, staffId: '', effectiveDate: '', interviewNotes: '' });
+      notify.success('Exit record queued.');
+      setOpen(false);
       load();
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
   const runBatch = async () => {
-    const r = await api<{ processed: number }>('/exm/batch/run', { method: 'POST' });
-    setMsg(`Applied ${r.processed} exit(s).`);
-    load();
+    try {
+      const r = await api<{ processed: number }>('/exm/batch/run', { method: 'POST' });
+      notify.success(`Applied ${r.processed} exit(s).`);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   const cancel = async (id: string) => {
-    await api(`/exm/exits/${id}/cancel`, { method: 'POST' });
-    load();
+    const ok = await confirm({
+      title: 'Cancel exit record',
+      message: 'This pending exit record will be cancelled.',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await api(`/exm/exits/${id}/cancel`, { method: 'POST' });
+      notify.success('Exit record cancelled.');
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Exit Records
-      </Typography>
-      {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
-      {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
-
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} flexWrap="wrap" useFlexGap>
-          <TextField size="small" label="Staff ID" value={f.staffId}
-            onChange={(e) => setF({ ...f, staffId: e.target.value })} />
-          <TextField select size="small" label="Reason" sx={{ minWidth: 200 }}
-            value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })}>
-            {REASONS.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
-          </TextField>
-          <TextField size="small" type="date" label="Effective date"
-            InputLabelProps={{ shrink: true }} value={f.effectiveDate}
-            onChange={(e) => setF({ ...f, effectiveDate: e.target.value })} />
-          <TextField size="small" label="Interview notes" sx={{ flexGrow: 1, minWidth: 240 }}
-            value={f.interviewNotes}
-            onChange={(e) => setF({ ...f, interviewNotes: e.target.value })} />
-          <Button variant="contained" onClick={create}
-            disabled={!f.staffId || !f.effectiveDate}>
-            Queue
-          </Button>
-          <Button variant="outlined" onClick={runBatch}>Run daily batch</Button>
-        </Stack>
-      </Paper>
+      <PageHeader
+        title="Exit Records"
+        primary={{ label: 'Queue exit', icon: 'add', onClick: openDrawer }}
+        secondary={[{ label: 'Run daily batch', icon: 'play_arrow', onClick: runBatch }]}
+      />
 
       <div style={{ height: 480, width: '100%' }}>
         <DataGrid
           rows={rows}
+          loading={loading}
           columns={[
             ...cols,
             {
@@ -122,6 +129,32 @@ export default function ExitsPage() {
           disableRowSelectionOnClick
         />
       </div>
+
+      <CrudDrawer
+        open={open}
+        title="Queue exit record"
+        onClose={() => setOpen(false)}
+        onSubmit={create}
+        submitLabel="Queue"
+        submitting={saving}
+        submitDisabled={!f.staffId || !f.effectiveDate}
+      >
+        <StaffPicker
+          value={f.staffId || null}
+          onChange={(id) => setF({ ...f, staffId: id ?? '' })}
+          required
+        />
+        <TextField select label="Reason" value={f.reason}
+          onChange={(e) => setF({ ...f, reason: e.target.value })}>
+          {REASONS.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
+        </TextField>
+        <TextField type="date" label="Effective date" InputLabelProps={{ shrink: true }}
+          value={f.effectiveDate}
+          onChange={(e) => setF({ ...f, effectiveDate: e.target.value })} />
+        <TextField label="Interview notes" multiline minRows={2}
+          value={f.interviewNotes}
+          onChange={(e) => setF({ ...f, interviewNotes: e.target.value })} />
+      </CrudDrawer>
     </Box>
   );
 }

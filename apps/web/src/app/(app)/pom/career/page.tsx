@@ -1,38 +1,43 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  Box,
-  Button,
-  Chip,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Box, Chip, Stack, Typography } from '@mui/material';
 import type { CareerEntry } from '@hrms/contracts';
 import { api } from '@/lib/api';
 import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
+import { StaffPicker } from '@/components/inputs/StaffPicker';
+import { useNotify } from '@/components/feedback/Notify';
 
 /** Staff career history — appointments + applied posting actions (UR-POM-003). */
 export default function CareerHistoryPage() {
+  const notify = useNotify();
   const [staffId, setStaffId] = useState('');
   const [entries, setEntries] = useState<CareerEntry[] | null>(null);
 
   const load = async () => {
     if (!staffId) return;
-    setEntries(await api<CareerEntry[]>(`/pom/career/${staffId}`));
+    try {
+      setEntries(await api<CareerEntry[]>(`/pom/career/${staffId}`));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Career History
-      </Typography>
+      <PageHeader
+        title="Career History"
+        subtitle="Appointments and applied posting actions"
+        primary={{ label: 'Load', icon: 'search', onClick: load, disabled: !staffId }}
+      />
+
       <Stack direction="row" spacing={2} mb={3}>
-        <TextField size="small" label="Staff ID" value={staffId}
-          onChange={(e) => setStaffId(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && load()} />
-        <Button variant="contained" onClick={load}>Load</Button>
+        <StaffPicker
+          value={staffId || null}
+          onChange={(id) => setStaffId(id ?? '')}
+          sx={{ minWidth: 320 }}
+        />
       </Stack>
 
       {entries && entries.length === 0 && (

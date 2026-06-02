@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Box, Chip, Typography } from '@mui/material';
+import { Box, Chip } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const cols: GridColDef[] = [
   { field: 'title', headerName: 'Post', flex: 1 },
@@ -30,15 +32,16 @@ const cols: GridColDef[] = [
 ];
 
 export default function PostsPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<any[]>([]);
   useEffect(() => {
-    api<any[]>('/esm/posts').then(setRows);
-  }, []);
+    api<any[]>('/esm/posts')
+      .then(setRows)
+      .catch((e: any) => notify.error(e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Establishment — Posts
-      </Typography>
+      <PageHeader title="Establishment — Posts" />
       <div style={{ height: 560, width: '100%' }}>
         <DataGrid rows={rows} columns={cols} disableRowSelectionOnClick />
       </div>

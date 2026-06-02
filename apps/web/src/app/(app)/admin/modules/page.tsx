@@ -9,11 +9,12 @@ import {
   ListItemIcon,
   ListItemText,
   Switch,
-  Typography,
 } from '@mui/material';
 import { api } from '@/lib/api';
 import { useBoot } from '@/theme/AppProviders';
 import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 interface Row {
   key: string;
@@ -26,30 +27,39 @@ interface Row {
 
 /** Per-tenant module entitlement (Odoo-style apps on/off). Core = locked on. */
 export default function ModulesAdmin() {
+  const notify = useNotify();
   const [rows, setRows] = useState<Row[]>([]);
   const { refresh } = useBoot();
 
-  const load = () => api<Row[]>('/config/modules').then(setRows);
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    try {
+      setRows(await api<Row[]>('/config/modules'));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = async (key: string, enabled: boolean) => {
-    await api('/config/modules', {
-      method: 'PUT',
-      body: JSON.stringify({ moduleKey: key, enabled }),
-    });
-    await load();
-    refresh(); // re-theme + rebuild nav immediately
+    try {
+      await api('/config/modules', {
+        method: 'PUT',
+        body: JSON.stringify({ moduleKey: key, enabled }),
+      });
+      await load();
+      refresh(); // re-theme + rebuild nav immediately
+      notify.success(enabled ? 'Module enabled' : 'Module disabled');
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Modules
-      </Typography>
-      <Typography color="text.secondary" mb={2}>
-        Enable or disable modules for this tenant. Disabled modules hide their
-        navigation and their API returns 404.
-      </Typography>
+      <PageHeader
+        title="Modules"
+        subtitle="Enable or disable modules for this tenant. Disabled modules hide their navigation and their API returns 404."
+      />
       <List>
         {rows.map((m) => (
           <ListItem

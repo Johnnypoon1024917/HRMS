@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -13,9 +12,13 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import type { StaffListItem, TimesheetView } from '@hrms/contracts';
+import type { TimesheetView } from '@hrms/contracts';
 import { api } from '@/lib/api';
 import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { StaffPicker } from '@/components/inputs/StaffPicker';
+import { useNotify } from '@/components/feedback/Notify';
 
 const KIND_OPTIONS = [
   { value: 'regular',         label: 'Regular' },
@@ -31,7 +34,7 @@ const STATUS_COLOR = (s: string) =>
 interface EntryDraft { date: string; hours: number; kind: string; note?: string }
 
 export default function TimesheetsPage() {
-  const [staff, setStaff] = useState<StaffListItem[]>([]);
+  const notify = useNotify();
   const [period, setPeriod] = useState(() => {
     const d = new Date();
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -39,19 +42,16 @@ export default function TimesheetsPage() {
   const [staffId, setStaffId] = useState('');
   const [entries, setEntries] = useState<EntryDraft[]>([]);
   const [list, setList] = useState<TimesheetView[]>([]);
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
-  const [editing, setEditing] = useState<string | null>(null);
-
-  useEffect(() => {
-    api<{ items: StaffListItem[] }>('/pim/staff?page=1&pageSize=100').then((r) =>
-      setStaff(r.items),
-    );
-  }, []);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const loadList = () =>
-    api<TimesheetView[]>(`/pay/timesheets${staffId ? `?staffId=${staffId}` : ''}`).then(setList);
+    api<TimesheetView[]>(`/pay/timesheets${staffId ? `?staffId=${staffId}` : ''}`)
+      .then(setList)
+      .catch((e: any) => notify.error(e.message));
   useEffect(() => { loadList(); /* eslint-disable-next-line */ }, [staffId]);
+
+  const openDrawer = () => { setEntries([]); setOpen(true); };
 
   const addEntry = () =>
     setEntries((e) => [...e, { date: `${period}-15`, hours: 8, kind: 'regular' }]);
@@ -61,24 +61,39 @@ export default function TimesheetsPage() {
     setEntries((e) => e.filter((_, idx) => idx !== i));
 
   const save = async () => {
-    setErr(''); setMsg('');
+    setSaving(true);
     try {
       await api('/pay/timesheets', {
         method: 'PUT',
         body: JSON.stringify({ staffId, period, entries }),
       });
-      setMsg('Timesheet saved as draft.');
+      notify.success('Timesheet saved as draft.');
+      setOpen(false);
       loadList();
-    } catch (e: any) { setErr(e.message); }
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const submit = async (id: string) => {
-    await api(`/pay/timesheets/${id}/submit`, { method: 'POST' });
-    loadList();
+    try {
+      await api(`/pay/timesheets/${id}/submit`, { method: 'POST' });
+      notify.success('Timesheet submitted.');
+      loadList();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
   const approve = async (id: string) => {
-    await api(`/pay/timesheets/${id}/approve`, { method: 'POST' });
-    loadList();
+    try {
+      await api(`/pay/timesheets/${id}/approve`, { method: 'POST' });
+      notify.success('Timesheet approved.');
+      loadList();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   const totals = entries.reduce(
@@ -92,73 +107,24 @@ export default function TimesheetsPage() {
     { total: 0, regular: 0, ot15: 0, ot20: 0 },
   );
 
+  const [editing, setEditing] = useState<string | null>(null);
+
   return (
     <Box sx={{ maxWidth: 1300 }}>
-      <Typography variant="h4" mb={0.5}>Timesheets</Typography>
-      <Typography color="text.secondary" mb={3}>
-        Hours for hourly / daily / OT-eligible staff. Approved timesheets feed
-        the payroll engine for the matching period.
-      </Typography>
+      <PageHeader
+        title="Timesheets"
+        subtitle="Hours for hourly / daily / OT-eligible staff. Approved timesheets feed the payroll engine for the matching period."
+        primary={{ label: 'New timesheet', icon: 'add', onClick: openDrawer }}
+      />
 
-      {/* Edit area */}
-      <Paper variant="outlined" sx={{ p: 2.5, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }} mb={entries.length ? 2.5 : 0}>
-          <TextField select size="small" label="Staff" value={staffId}
-            onChange={(e) => setStaffId(e.target.value)} sx={{ minWidth: 240 }}>
-            {staff.map((s) => (
-              <MenuItem key={s.id} value={s.id}>{s.staffNo} · {s.nameEn}</MenuItem>
-            ))}
-          </TextField>
-          <TextField size="small" label="Period (YYYY-MM)" value={period}
-            onChange={(e) => setPeriod(e.target.value)} sx={{ width: 170 }} />
-          <Button variant="outlined" startIcon={<Sym name="add" size={18} />} onClick={addEntry} disabled={!staffId}>
-            Add entry
-          </Button>
-          <Box flexGrow={1} />
-          <Stack direction="row" spacing={2}>
-            <Chip size="small" label={`${totals.regular.toFixed(1)} reg`} />
-            <Chip size="small" label={`${totals.ot15.toFixed(1)} OT 1.5×`} />
-            <Chip size="small" label={`${totals.ot20.toFixed(1)} OT 2.0×`} />
-            <Chip size="small" label={`${totals.total.toFixed(1)} total`} color="primary" />
-          </Stack>
-          {entries.length > 0 && (
-            <Button variant="contained" onClick={save}>Save draft</Button>
-          )}
-        </Stack>
-
-        {entries.length > 0 && (
-          <Box>
-            {entries.map((e, i) => (
-              <Stack key={i} direction="row" spacing={1.5} alignItems="center" mb={1}>
-                <TextField size="small" type="date" value={e.date}
-                  onChange={(ev) => updateEntry(i, { date: ev.target.value })}
-                  sx={{ width: 160 }} InputLabelProps={{ shrink: true }} />
-                <TextField size="small" type="number" label="Hours"
-                  inputProps={{ step: 0.5, min: 0 }}
-                  value={e.hours}
-                  onChange={(ev) => updateEntry(i, { hours: Number(ev.target.value) })}
-                  sx={{ width: 110 }} />
-                <TextField select size="small" label="Kind" value={e.kind}
-                  onChange={(ev) => updateEntry(i, { kind: ev.target.value })}
-                  sx={{ width: 170 }}>
-                  {KIND_OPTIONS.map((k) => (
-                    <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>
-                  ))}
-                </TextField>
-                <TextField size="small" label="Note" value={e.note ?? ''}
-                  onChange={(ev) => updateEntry(i, { note: ev.target.value })}
-                  sx={{ flexGrow: 1 }} />
-                <IconButton size="small" onClick={() => removeEntry(i)}>
-                  <Sym name="close" size={18} />
-                </IconButton>
-              </Stack>
-            ))}
-          </Box>
-        )}
-      </Paper>
-
-      {err && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErr('')}>{err}</Alert>}
-      {msg && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setMsg('')}>{msg}</Alert>}
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} mb={3}>
+        <StaffPicker
+          label="Filter by staff"
+          value={staffId || null}
+          onChange={(id) => setStaffId(id ?? '')}
+          sx={{ minWidth: 280 }}
+        />
+      </Stack>
 
       <Typography variant="subtitle1" mb={1.5}>Submitted timesheets</Typography>
       <Stack spacing={1}>
@@ -207,6 +173,62 @@ export default function TimesheetsPage() {
           <Typography variant="body2" color="text.secondary">No timesheets yet.</Typography>
         )}
       </Stack>
+
+      <CrudDrawer
+        open={open}
+        title="New timesheet"
+        subtitle="Add daily entries, then save as a draft for review."
+        onClose={() => setOpen(false)}
+        onSubmit={save}
+        submitLabel="Save draft"
+        submitting={saving}
+        submitDisabled={!staffId || entries.length === 0}
+      >
+        <StaffPicker
+          value={staffId || null}
+          onChange={(id) => setStaffId(id ?? '')}
+          required
+        />
+        <TextField size="small" label="Period (YYYY-MM)" value={period}
+          onChange={(e) => setPeriod(e.target.value)} sx={{ width: 170 }} />
+
+        <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Button variant="outlined" startIcon={<Sym name="add" size={18} />} onClick={addEntry} disabled={!staffId}>
+            Add entry
+          </Button>
+          <Box flexGrow={1} />
+          <Chip size="small" label={`${totals.regular.toFixed(1)} reg`} />
+          <Chip size="small" label={`${totals.ot15.toFixed(1)} OT 1.5×`} />
+          <Chip size="small" label={`${totals.ot20.toFixed(1)} OT 2.0×`} />
+          <Chip size="small" label={`${totals.total.toFixed(1)} total`} color="primary" />
+        </Stack>
+
+        {entries.map((e, i) => (
+          <Stack key={i} direction="row" spacing={1.5} alignItems="center">
+            <TextField size="small" type="date" value={e.date}
+              onChange={(ev) => updateEntry(i, { date: ev.target.value })}
+              sx={{ width: 160 }} InputLabelProps={{ shrink: true }} />
+            <TextField size="small" type="number" label="Hours"
+              inputProps={{ step: 0.5, min: 0 }}
+              value={e.hours}
+              onChange={(ev) => updateEntry(i, { hours: Number(ev.target.value) })}
+              sx={{ width: 110 }} />
+            <TextField select size="small" label="Kind" value={e.kind}
+              onChange={(ev) => updateEntry(i, { kind: ev.target.value })}
+              sx={{ width: 170 }}>
+              {KIND_OPTIONS.map((k) => (
+                <MenuItem key={k.value} value={k.value}>{k.label}</MenuItem>
+              ))}
+            </TextField>
+            <TextField size="small" label="Note" value={e.note ?? ''}
+              onChange={(ev) => updateEntry(i, { note: ev.target.value })}
+              sx={{ flexGrow: 1 }} />
+            <IconButton size="small" onClick={() => removeEntry(i)}>
+              <Sym name="close" size={18} />
+            </IconButton>
+          </Stack>
+        ))}
+      </CrudDrawer>
     </Box>
   );
 }

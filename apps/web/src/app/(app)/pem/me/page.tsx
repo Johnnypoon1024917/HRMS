@@ -1,18 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Chip, Paper, Stack, TextField, Typography } from '@mui/material';
 import type { AppraisalView } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
 
 function statusColor(s: string) {
   return s === 'finalised'
@@ -26,39 +20,49 @@ function statusColor(s: string) {
 
 /** Employee self-assessment (UR-PEM): complete own appraisal sections. */
 export default function MyAppraisalsPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<AppraisalView[]>([]);
   const [open, setOpen] = useState<AppraisalView | null>(null);
   const [comments, setComments] = useState('');
   const [scores, setScores] = useState<Record<string, number>>({});
-  const [msg, setMsg] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const load = () => api<AppraisalView[]>('/pem/me').then(setRows);
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    try {
+      setRows(await api<AppraisalView[]>('/pem/me'));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const edit = (r: AppraisalView) => {
     setOpen(r);
     setComments(r.selfComments ?? '');
     setScores(r.selfScores ?? {});
-    setMsg('');
   };
 
   const submit = async () => {
     if (!open) return;
-    await api(`/pem/reports/${open.id}/self`, {
-      method: 'POST',
-      body: JSON.stringify({ selfComments: comments, selfScores: scores }),
-    });
-    setMsg('Self-assessment submitted.');
-    setOpen(null);
-    load();
+    setSaving(true);
+    try {
+      await api(`/pem/reports/${open.id}/self`, {
+        method: 'POST',
+        body: JSON.stringify({ selfComments: comments, selfScores: scores }),
+      });
+      notify.success('Self-assessment submitted.');
+      setOpen(null);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        My Appraisals
-      </Typography>
-      {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
+      <PageHeader title="My Appraisals" />
 
       <Stack spacing={1.5}>
         {rows.length === 0 && (
@@ -81,34 +85,39 @@ export default function MyAppraisalsPage() {
                 </Button>
               )}
             </Stack>
-
-            {open?.id === r.id && (
-              <Box mt={2}>
-                {r.sections.map((s) => (
-                  <TextField
-                    key={s}
-                    size="small"
-                    type="number"
-                    label={`${s} (${r.ratingMin}-${r.ratingMax})`}
-                    sx={{ mr: 2, mb: 2, width: 180 }}
-                    value={scores[s] ?? ''}
-                    onChange={(e) =>
-                      setScores({ ...scores, [s]: Number(e.target.value) })
-                    }
-                  />
-                ))}
-                <TextField
-                  fullWidth multiline minRows={3} label="Self comments"
-                  value={comments} sx={{ mb: 2 }}
-                  onChange={(e) => setComments(e.target.value)}
-                />
-                <Button variant="contained" onClick={submit}>Submit</Button>
-                <Button sx={{ ml: 1 }} onClick={() => setOpen(null)}>Cancel</Button>
-              </Box>
-            )}
           </Paper>
         ))}
       </Stack>
+
+      <CrudDrawer
+        open={!!open}
+        title="Self-assessment"
+        subtitle={open?.cycleName}
+        onClose={() => setOpen(null)}
+        onSubmit={submit}
+        submitLabel="Submit"
+        submitting={saving}
+      >
+        {open?.sections.map((s) => (
+          <TextField
+            key={s}
+            size="small"
+            type="number"
+            label={`${s} (${open.ratingMin}-${open.ratingMax})`}
+            sx={{ width: 180 }}
+            value={scores[s] ?? ''}
+            onChange={(e) => setScores({ ...scores, [s]: Number(e.target.value) })}
+          />
+        ))}
+        <TextField
+          fullWidth
+          multiline
+          minRows={3}
+          label="Self comments"
+          value={comments}
+          onChange={(e) => setComments(e.target.value)}
+        />
+      </CrudDrawer>
     </Box>
   );
 }

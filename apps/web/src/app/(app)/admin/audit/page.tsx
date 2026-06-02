@@ -1,9 +1,11 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
-import { Box, TextField, Typography } from '@mui/material';
+import { Box, TextField } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const cols: GridColDef[] = [
   {
@@ -21,18 +23,25 @@ const cols: GridColDef[] = [
 
 /** Append-only audit log viewer (REQ-SEC-001). */
 export default function AuditPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<any[]>([]);
   const [entity, setEntity] = useState('');
 
-  const load = () =>
-    api<any[]>(`/audit${entity ? `?entity=${entity}` : ''}`).then(setRows);
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    try {
+      setRows(await api<any[]>(`/audit${entity ? `?entity=${entity}` : ''}`));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Audit Log
-      </Typography>
+      <PageHeader
+        title="Audit Log"
+        primary={{ label: 'Search', icon: 'search', onClick: load }}
+      />
       <TextField
         size="small" label="Filter by entity" value={entity} sx={{ mb: 2 }}
         onChange={(e) => setEntity(e.target.value)}

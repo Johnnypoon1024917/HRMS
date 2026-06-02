@@ -70,6 +70,10 @@ COPY --from=build /repo/apps/api/prisma       ./apps/api/prisma
 COPY --from=build /repo/apps/api/package.json ./apps/api/package.json
 COPY --from=build /repo/apps/api/node_modules ./apps/api/node_modules
 
+# Run as the unprivileged built-in `node` user (uid 1000), not root.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 4000
 WORKDIR /app/apps/api
 CMD ["node", "dist/main.js"]

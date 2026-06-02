@@ -1,20 +1,19 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import {
   Box,
-  Button,
   FormControlLabel,
   MenuItem,
-  Paper,
-  Stack,
   Switch,
   TextField,
-  Typography,
 } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { BenefitTypeUpsert } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
 
 const cols: GridColDef[] = [
   { field: 'code', headerName: 'Code', width: 110 },
@@ -25,57 +24,86 @@ const cols: GridColDef[] = [
   { field: 'active', headerName: 'Active', width: 90, type: 'boolean' },
 ];
 
-export default function BenefitTypesPage() {
-  const [rows, setRows] = useState<any[]>([]);
-  const [f, setF] = useState<BenefitTypeUpsert>({
-    code: '',
-    nameEn: '',
-    category: 'housing',
-    chargeable: false,
-    monthlyAmount: 0,
-    active: true,
-  });
+const emptyForm: BenefitTypeUpsert = {
+  code: '',
+  nameEn: '',
+  category: 'housing',
+  chargeable: false,
+  monthlyAmount: 0,
+  active: true,
+};
 
-  const load = () => api<any[]>('/hbm/types').then(setRows);
-  useEffect(() => { load(); }, []);
+export default function BenefitTypesPage() {
+  const notify = useNotify();
+  const [rows, setRows] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [f, setF] = useState<BenefitTypeUpsert>(emptyForm);
+
+  const load = async () => {
+    try {
+      setRows(await api<any[]>('/hbm/types'));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openDrawer = () => { setF(emptyForm); setOpen(true); };
 
   const save = async () => {
-    await api('/hbm/types', { method: 'PUT', body: JSON.stringify(f) });
-    setF({ ...f, code: '', nameEn: '' });
-    load();
+    setSaving(true);
+    try {
+      await api('/hbm/types', { method: 'PUT', body: JSON.stringify(f) });
+      notify.success('Benefit type saved');
+      setOpen(false);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Benefit Types
-      </Typography>
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} flexWrap="wrap" useFlexGap>
-          <TextField size="small" label="Code" value={f.code}
-            onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} />
-          <TextField size="small" label="Name" value={f.nameEn}
-            onChange={(e) => setF({ ...f, nameEn: e.target.value })} />
-          <TextField select size="small" label="Category" sx={{ minWidth: 150 }}
-            value={f.category} onChange={(e) => setF({ ...f, category: e.target.value as any })}>
-            {['housing', 'medical', 'transport', 'allowance', 'loan', 'insurance'].map((c) => (
-              <MenuItem key={c} value={c}>{c}</MenuItem>
-            ))}
-          </TextField>
-          <TextField size="small" type="number" label="Monthly" sx={{ width: 130 }}
-            value={f.monthlyAmount}
-            onChange={(e) => setF({ ...f, monthlyAmount: Number(e.target.value) })} />
-          <FormControlLabel
-            control={<Switch checked={f.chargeable}
-              onChange={(e) => setF({ ...f, chargeable: e.target.checked })} />}
-            label="Chargeable" />
-          <Button variant="contained" onClick={save}>Save</Button>
-        </Stack>
-      </Paper>
+      <PageHeader
+        title="Benefit Types"
+        primary={{ label: 'Add type', icon: 'add', onClick: openDrawer }}
+      />
+
       <div style={{ height: 460, width: '100%' }}>
         <DataGrid rows={rows} columns={cols} getRowId={(r) => r.code}
           disableRowSelectionOnClick />
       </div>
+
+      <CrudDrawer
+        open={open}
+        title="Add benefit type"
+        onClose={() => setOpen(false)}
+        onSubmit={save}
+        submitLabel="Save"
+        submitting={saving}
+        submitDisabled={!f.code || !f.nameEn}
+      >
+        <TextField label="Code" value={f.code}
+          onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} />
+        <TextField label="Name" value={f.nameEn}
+          onChange={(e) => setF({ ...f, nameEn: e.target.value })} />
+        <TextField select label="Category"
+          value={f.category} onChange={(e) => setF({ ...f, category: e.target.value as any })}>
+          {['housing', 'medical', 'transport', 'allowance', 'loan', 'insurance'].map((c) => (
+            <MenuItem key={c} value={c}>{c}</MenuItem>
+          ))}
+        </TextField>
+        <TextField type="number" label="Monthly"
+          value={f.monthlyAmount}
+          onChange={(e) => setF({ ...f, monthlyAmount: Number(e.target.value) })} />
+        <FormControlLabel
+          control={<Switch checked={f.chargeable}
+            onChange={(e) => setF({ ...f, chargeable: e.target.checked })} />}
+          label="Chargeable" />
+      </CrudDrawer>
     </Box>
   );
 }

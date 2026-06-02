@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -23,6 +22,9 @@ import type {
   Payslip,
 } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
 
 const fmt = (n: number, ccy = 'HKD') =>
   new Intl.NumberFormat('en-HK', { style: 'currency', currency: ccy }).format(n);
@@ -56,6 +58,7 @@ const varianceCols: GridColDef[] = [
 ];
 
 export default function PayRunsPage() {
+  const notify = useNotify();
   const [groupCode] = useState('MONTHLY-HK');
   const [calendar, setCalendar] = useState<PayCalendarEntry[]>([]);
   const [period, setPeriod] = useState('');
@@ -64,9 +67,9 @@ export default function PayRunsPage() {
   const [variance, setVariance] = useState<PayRunVariance | null>(null);
   const [exports, setExports] = useState<PayExportView[]>([]);
   const [exportFmt, setExportFmt] = useState('iso20022_pain001');
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
   const [history, setHistory] = useState<PayRunResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     api<PayCalendarEntry[]>(`/pay/calendar/${groupCode}`).then((c) => {
@@ -88,7 +91,7 @@ export default function PayRunsPage() {
   };
 
   const create = async () => {
-    setErr(''); setMsg('');
+    setCreating(true);
     try {
       const r = await api<PayRunResult>('/pay/runs', {
         method: 'POST',
@@ -96,29 +99,35 @@ export default function PayRunsPage() {
       });
       setHistory((h) => [r, ...h.filter((x) => x.id !== r.id)]);
       await loadRunDetails(r);
-    } catch (e: any) { setErr(e.message); }
+      notify.success('Run calculated.');
+      setOpen(false);
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const approve = async () => {
     if (!run) return;
     try {
       const r = await api<PayRunResult>(`/pay/runs/${run.id}/approve`, { method: 'POST' });
-      setMsg('Run approved.'); setRun(r);
-    } catch (e: any) { setErr(e.message); }
+      notify.success('Run approved.'); setRun(r);
+    } catch (e: any) { notify.error(e.message); }
   };
   const markPaid = async () => {
     if (!run) return;
     try {
       const r = await api<PayRunResult>(`/pay/runs/${run.id}/pay`, { method: 'POST' });
-      setMsg('Run marked as paid.'); setRun(r);
-    } catch (e: any) { setErr(e.message); }
+      notify.success('Run marked as paid.'); setRun(r);
+    } catch (e: any) { notify.error(e.message); }
   };
   const reverse = async () => {
     if (!run) return;
     try {
       const r = await api<PayRunResult>(`/pay/runs/${run.id}/reverse`, { method: 'POST' });
-      setMsg('Run reversed; YTD rolled back.'); setRun(r);
-    } catch (e: any) { setErr(e.message); }
+      notify.success('Run reversed; YTD rolled back.'); setRun(r);
+    } catch (e: any) { notify.error(e.message); }
   };
   const exportBank = async () => {
     if (!run) return;
@@ -128,56 +137,36 @@ export default function PayRunsPage() {
         body: JSON.stringify({ format: exportFmt }),
       });
       setExports(await api<PayExportView[]>(`/pay/runs/${run.id}/exports`));
-      setMsg('Bank file generated.');
-    } catch (e: any) { setErr(e.message); }
+      notify.success('Bank file generated.');
+    } catch (e: any) { notify.error(e.message); }
   };
   const exportGl = async () => {
     if (!run) return;
     try {
       await api(`/pay/runs/${run.id}/exports/gl`, { method: 'POST' });
-      setMsg('GL journal posted.');
-    } catch (e: any) { setErr(e.message); }
+      notify.success('GL journal posted.');
+    } catch (e: any) { notify.error(e.message); }
   };
+
+  const runActions = [];
+  if (run && run.status === 'calculated') {
+    runActions.push({ label: 'Approve (dual control)', icon: 'check', onClick: approve });
+  }
+  if (run && run.status === 'approved') {
+    runActions.push({ label: 'Mark paid', icon: 'payments', onClick: markPaid });
+  }
+  if (run && ['approved', 'paid'].includes(run.status)) {
+    runActions.push({ label: 'Reverse', icon: 'undo', onClick: reverse, destructive: true });
+  }
 
   return (
     <Box sx={{ maxWidth: 1400 }}>
-      <Typography variant="h4" mb={0.5}>Payroll runs</Typography>
-      <Typography color="text.secondary" mb={3}>
-        Pay group <b>{groupCode}</b> · {history.length} historical run{history.length === 1 ? '' : 's'}
-      </Typography>
-
-      {/* Create */}
-      <Paper variant="outlined" sx={{ p: 2.5, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
-          <TextField
-            select size="small" label="Period" value={period}
-            onChange={(e) => setPeriod(e.target.value)} sx={{ minWidth: 180 }}
-          >
-            {calendar.map((c) => (
-              <MenuItem key={c.id} value={c.period}>
-                {c.period} · pay {new Date(c.paymentDate).toLocaleDateString()}
-                {c.status !== 'open' ? ` · ${c.status}` : ''}
-              </MenuItem>
-            ))}
-          </TextField>
-          <Button variant="contained" onClick={create} disabled={!period}>
-            Calculate run
-          </Button>
-          <Box flexGrow={1} />
-          {run && run.status === 'calculated' && (
-            <Button variant="outlined" onClick={approve}>Approve (dual control)</Button>
-          )}
-          {run && run.status === 'approved' && (
-            <Button variant="outlined" onClick={markPaid}>Mark paid</Button>
-          )}
-          {run && ['approved', 'paid'].includes(run.status) && (
-            <Button variant="text" color="error" onClick={reverse}>Reverse</Button>
-          )}
-        </Stack>
-      </Paper>
-
-      {err && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErr('')}>{err}</Alert>}
-      {msg && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setMsg('')}>{msg}</Alert>}
+      <PageHeader
+        title="Payroll runs"
+        subtitle={`Pay group ${groupCode} · ${history.length} historical run${history.length === 1 ? '' : 's'}`}
+        primary={{ label: 'Calculate run', icon: 'add', onClick: () => setOpen(true) }}
+        secondary={runActions}
+      />
 
       {/* Totals */}
       {run && (
@@ -318,6 +307,29 @@ export default function PayRunsPage() {
           )}
         </Stack>
       </Paper>
+
+      <CrudDrawer
+        open={open}
+        title="Calculate payroll run"
+        subtitle={`Pay group ${groupCode}`}
+        onClose={() => setOpen(false)}
+        onSubmit={create}
+        submitLabel="Calculate run"
+        submitting={creating}
+        submitDisabled={!period}
+      >
+        <TextField
+          select label="Period" value={period}
+          onChange={(e) => setPeriod(e.target.value)}
+        >
+          {calendar.map((c) => (
+            <MenuItem key={c.id} value={c.period}>
+              {c.period} · pay {new Date(c.paymentDate).toLocaleDateString()}
+              {c.status !== 'open' ? ` · ${c.status}` : ''}
+            </MenuItem>
+          ))}
+        </TextField>
+      </CrudDrawer>
     </Box>
   );
 }

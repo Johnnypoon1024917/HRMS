@@ -5,19 +5,20 @@ import { Alert, Box, Button, Paper, Typography } from '@mui/material';
 import type { ImportResult } from '@hrms/contracts';
 import { getToken } from '@/lib/api';
 import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 /** Batch staff upload (UR-PIM-002). Commits only if ALL rows pass; otherwise
  *  an Excel exception report is produced. */
 export default function StaffImportPage() {
+  const notify = useNotify();
   const [file, setFile] = useState<File | null>(null);
   const [res, setRes] = useState<ImportResult | null>(null);
-  const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
   const upload = async () => {
     if (!file) return;
     setBusy(true);
-    setErr('');
     setRes(null);
     try {
       const fd = new FormData();
@@ -31,9 +32,15 @@ export default function StaffImportPage() {
         body: fd,
       });
       if (!r.ok) throw new Error((await r.json()).message ?? r.statusText);
-      setRes(await r.json());
+      const result: ImportResult = await r.json();
+      setRes(result);
+      if (result.errorRows) {
+        notify.warning(`${result.errorRows} row(s) failed validation`);
+      } else {
+        notify.success(`${result.okRows}/${result.totalRows} staff imported`);
+      }
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
     } finally {
       setBusy(false);
     }
@@ -41,9 +48,12 @@ export default function StaffImportPage() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Import Staff (Excel)
-      </Typography>
+      <PageHeader
+        title="Import Staff (Excel)"
+        subtitle="Batch staff upload — all-or-nothing commit."
+        primary={{ label: busy ? 'Uploading…' : 'Upload', icon: 'upload', onClick: upload, disabled: !file || busy }}
+      />
+
       <Paper variant="outlined" sx={{ p: 3, mb: 2 }}>
         <Typography variant="body2" color="text.secondary" mb={2}>
           Columns: Staff No, Name (EN), Name (ZH), Sex, DOB, ID Type, ID No.
@@ -54,13 +64,8 @@ export default function StaffImportPage() {
           <input hidden type="file" accept=".xlsx"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </Button>
-        <Button sx={{ ml: 2 }} variant="contained" disabled={!file || busy}
-          onClick={upload}>
-          {busy ? 'Uploading…' : 'Upload'}
-        </Button>
       </Paper>
 
-      {err && <Alert severity="error">{err}</Alert>}
       {res && (
         <Alert severity={res.errorRows ? 'warning' : 'success'}>
           Batch {res.batchId}: {res.okRows}/{res.totalRows} imported,{' '}

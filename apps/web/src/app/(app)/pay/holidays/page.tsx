@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -14,40 +13,43 @@ import {
 } from '@mui/material';
 import type { PublicHolidayView } from '@hrms/contracts';
 import { api } from '@/lib/api';
-import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const TYPE_COLOR = (t: string) =>
   t === 'statutory' ? 'success' : t === 'company' ? 'info' : 'default';
 
 export default function HolidaysPage() {
+  const notify = useNotify();
   const [locale, setLocale] = useState('HK');
   const [from, setFrom] = useState('2026-01-01');
   const [to, setTo] = useState('2026-12-31');
   const [rows, setRows] = useState<PublicHolidayView[]>([]);
   const [sync, setSync] = useState<any>(null);
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
 
-  const load = () => {
-    api<PublicHolidayView[]>(`/pay/holidays?localeCode=${locale}&from=${from}&to=${to}`).then(setRows);
-    api<any>(`/pay/holidays/sync-status?localeCode=${locale}`).then(setSync);
+  const load = async () => {
+    try {
+      setRows(await api<PublicHolidayView[]>(`/pay/holidays?localeCode=${locale}&from=${from}&to=${to}`));
+      setSync(await api<any>(`/pay/holidays/sync-status?localeCode=${locale}`));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [locale]);
 
   const doSync = async () => {
-    setErr(''); setMsg('');
     try {
       const r = await api<any>('/pay/holidays/sync', {
         method: 'POST',
         body: JSON.stringify({ localeCode: locale }),
       });
-      setMsg(
+      notify.success(
         r.status === 'ok'
           ? `Synced ${r.upserts} holidays from ${r.sourceUrl}`
           : `Sync fell back (${r.errorMessage}); ${r.upserts} holidays loaded from built-in list.`,
       );
       load();
-    } catch (e: any) { setErr(e.message); }
+    } catch (e: any) { notify.error(e.message); }
   };
 
   const statutoryCount = rows.filter((r) => r.type === 'statutory').length;
@@ -55,11 +57,11 @@ export default function HolidaysPage() {
 
   return (
     <Box sx={{ maxWidth: 1100 }}>
-      <Typography variant="h4" mb={0.5}>Public holidays</Typography>
-      <Typography color="text.secondary" mb={3}>
-        Synced from <b>data.gov.hk</b> (1823 calendar). Statutory holidays (12)
-        are paid for non-monthly contracts under the Employment Ordinance.
-      </Typography>
+      <PageHeader
+        title="Public holidays"
+        subtitle="Synced from data.gov.hk (1823 calendar). Statutory holidays (12) are paid for non-monthly contracts under the Employment Ordinance."
+        primary={{ label: 'Sync from data.gov.hk', icon: 'sync', onClick: doSync }}
+      />
 
       <Paper variant="outlined" sx={{ p: 2.5, mb: 3 }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
@@ -76,10 +78,6 @@ export default function HolidaysPage() {
             InputLabelProps={{ shrink: true }}
             onChange={(e) => setTo(e.target.value)} />
           <Button variant="outlined" onClick={load}>Filter</Button>
-          <Box flexGrow={1} />
-          <Button variant="contained" startIcon={<Sym name="sync" size={18} />} onClick={doSync}>
-            Sync from data.gov.hk
-          </Button>
         </Stack>
         {sync && (
           <Typography variant="caption" color="text.secondary" mt={1.5} display="block">
@@ -91,9 +89,6 @@ export default function HolidaysPage() {
           </Typography>
         )}
       </Paper>
-
-      {err && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErr('')}>{err}</Alert>}
-      {msg && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setMsg('')}>{msg}</Alert>}
 
       <Stack direction="row" spacing={2} mb={2}>
         <Chip label={`${statutoryCount} statutory`} color="success" size="small" />

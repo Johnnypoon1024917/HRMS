@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import {
@@ -14,6 +14,8 @@ import {
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { BenefitStats } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const cols: GridColDef[] = [
   { field: 'staffNo', headerName: 'Staff', width: 110 },
@@ -23,24 +25,30 @@ const cols: GridColDef[] = [
 
 /** Monthly benefit statistics + cessation report (UR-HBM-007/008). */
 export default function BenefitStatsPage() {
+  const notify = useNotify();
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [s, setS] = useState<BenefitStats | null>(null);
 
-  const load = () =>
-    api<BenefitStats>(`/hbm/stats?period=${period}`).then(setS);
-  useEffect(() => { load(); }, []); // eslint-disable-line
+  const load = async () => {
+    try {
+      setS(await api<BenefitStats>(`/hbm/stats?period=${period}`));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const maxEnr = Math.max(1, ...(s?.byCategory.map((b) => b.enrolments) ?? [0]));
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Benefit Statistics
-      </Typography>
+      <PageHeader
+        title="Benefit Statistics"
+        primary={{ label: 'Refresh', icon: 'refresh', onClick: load }}
+      />
       <Stack direction="row" spacing={2} mb={3} alignItems="center">
         <TextField size="small" label="Period (YYYY-MM)" value={period}
           onChange={(e) => setPeriod(e.target.value)} />
-        <button onClick={load} style={{ padding: '6px 12px' }}>Refresh</button>
       </Stack>
 
       {s && (

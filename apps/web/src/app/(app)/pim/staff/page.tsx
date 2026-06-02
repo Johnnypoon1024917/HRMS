@@ -1,18 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Box,
-  Button,
   Chip,
+  Paper,
   Stack,
   TextField,
-  Typography,
 } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { Paged, StaffListItem } from '@hrms/contracts';
 import { api } from '@/lib/api';
-import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
 
 const columns: GridColDef[] = [
   { field: 'staffNo', headerName: 'Staff No.', width: 120 },
@@ -34,8 +34,10 @@ const columns: GridColDef[] = [
   },
 ];
 
-/** Personnel search (UR-GEN-003): multi-criteria AND, server-paginated. */
+/** Personnel search (UR-GEN-003): multi-criteria AND, server-paginated.
+ *  Rows link to the entity-centric Employee Profile (Principle 1). */
 export default function StaffPage() {
+  const router = useRouter();
   const [name, setName] = useState('');
   const [staffNo, setStaffNo] = useState('');
   const [rows, setRows] = useState<StaffListItem[]>([]);
@@ -59,26 +61,29 @@ export default function StaffPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Personnel
-      </Typography>
-      <Stack direction="row" spacing={2} mb={2}>
-        <TextField
-          size="small" label="Name" value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <TextField
-          size="small" label="Staff No." value={staffNo}
-          onChange={(e) => setStaffNo(e.target.value)}
-        />
-        <Button variant="contained" startIcon={<Sym name="search" size={18} />} onClick={() => { setPage(0); load(); }}>
-          Search
-        </Button>
-      </Stack>
+      <PageHeader
+        title="Personnel"
+        subtitle="Search staff, then open a profile to view or edit."
+        primary={{ label: 'Search', icon: 'search', onClick: () => { setPage(0); load(); } }}
+      />
+      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          <TextField
+            size="small" label="Name" value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && (setPage(0), load())}
+          />
+          <TextField
+            size="small" label="Staff No." value={staffNo}
+            onChange={(e) => setStaffNo(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && (setPage(0), load())}
+          />
+        </Stack>
+      </Paper>
       <div style={{ height: 560, width: '100%' }}>
         <DataGrid
           rows={rows}
@@ -89,7 +94,8 @@ export default function StaffPage() {
           paginationModel={{ page, pageSize: 25 }}
           onPaginationModelChange={(m) => setPage(m.page)}
           pageSizeOptions={[25]}
-          disableRowSelectionOnClick
+          onRowClick={(p) => router.push(`/pim/staff/${p.id}`)}
+          sx={{ '& .MuiDataGrid-row': { cursor: 'pointer' } }}
         />
       </div>
     </Box>

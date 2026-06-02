@@ -2,17 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
-  Button,
   Card,
   CardContent,
   Chip,
   FormControlLabel,
   Grid,
   MenuItem,
-  Paper,
-  Stack,
   Switch,
   TextField,
   Typography,
@@ -23,6 +19,9 @@ import type {
   LeaveRequestView,
 } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
 
 const cols: GridColDef[] = [
   { field: 'leaveTypeCode', headerName: 'Type', width: 90 },
@@ -52,43 +51,57 @@ const cols: GridColDef[] = [
   { field: 'reason', headerName: 'Reason', flex: 1 },
 ];
 
+const emptyForm = {
+  leaveTypeCode: 'AL',
+  startDate: '',
+  endDate: '',
+  halfDay: false,
+  reason: '',
+};
+
 export default function MyLeavePage() {
+  const notify = useNotify();
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
   const [rows, setRows] = useState<LeaveRequestView[]>([]);
-  const [form, setForm] = useState({
-    leaveTypeCode: 'AL',
-    startDate: '',
-    endDate: '',
-    halfDay: false,
-    reason: '',
-  });
-  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState(emptyForm);
 
-  const load = () => {
-    api<LeaveBalance[]>('/lve/balances').then(setBalances);
-    api<LeaveRequestView[]>('/lve/me').then(setRows);
+  const load = async () => {
+    try {
+      setBalances(await api<LeaveBalance[]>('/lve/balances'));
+      setRows(await api<LeaveRequestView[]>('/lve/me'));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openDrawer = () => { setForm(emptyForm); setOpen(true); };
 
   const submit = async () => {
-    setErr('');
+    setSaving(true);
     try {
       await api('/lve/requests', {
         method: 'POST',
         body: JSON.stringify(form),
       });
-      setForm({ ...form, startDate: '', endDate: '', reason: '' });
+      notify.success('Leave request submitted');
+      setOpen(false);
       load();
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        My Leave
-      </Typography>
+      <PageHeader
+        title="My Leave"
+        primary={{ label: 'Request leave', icon: 'add', onClick: openDrawer }}
+      />
 
       <Grid container spacing={2} mb={3}>
         {balances.map((b) => (
@@ -110,56 +123,55 @@ export default function MyLeavePage() {
         ))}
       </Grid>
 
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Typography fontWeight={600} mb={2}>
-          Request leave
-        </Typography>
-        {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
-          <TextField
-            select size="small" label="Type" sx={{ minWidth: 160 }}
-            value={form.leaveTypeCode}
-            onChange={(e) => setForm({ ...form, leaveTypeCode: e.target.value })}
-          >
-            {balances.map((b) => (
-              <MenuItem key={b.leaveTypeCode} value={b.leaveTypeCode}>
-                {b.leaveTypeName}
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            size="small" type="date" label="From" InputLabelProps={{ shrink: true }}
-            value={form.startDate}
-            onChange={(e) => setForm({ ...form, startDate: e.target.value })}
-          />
-          <TextField
-            size="small" type="date" label="To" InputLabelProps={{ shrink: true }}
-            value={form.endDate}
-            onChange={(e) => setForm({ ...form, endDate: e.target.value })}
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={form.halfDay}
-                onChange={(e) => setForm({ ...form, halfDay: e.target.checked })}
-              />
-            }
-            label="½ day"
-          />
-          <TextField
-            size="small" label="Reason" sx={{ flexGrow: 1 }}
-            value={form.reason}
-            onChange={(e) => setForm({ ...form, reason: e.target.value })}
-          />
-          <Button variant="contained" onClick={submit}>
-            Submit
-          </Button>
-        </Stack>
-      </Paper>
-
       <div style={{ height: 420, width: '100%' }}>
         <DataGrid rows={rows} columns={cols} disableRowSelectionOnClick />
       </div>
+
+      <CrudDrawer
+        open={open}
+        title="Request leave"
+        onClose={() => setOpen(false)}
+        onSubmit={submit}
+        submitLabel="Submit"
+        submitting={saving}
+        submitDisabled={!form.startDate || !form.endDate}
+      >
+        <TextField
+          select label="Type"
+          value={form.leaveTypeCode}
+          onChange={(e) => setForm({ ...form, leaveTypeCode: e.target.value })}
+        >
+          {balances.map((b) => (
+            <MenuItem key={b.leaveTypeCode} value={b.leaveTypeCode}>
+              {b.leaveTypeName}
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          type="date" label="From" InputLabelProps={{ shrink: true }}
+          value={form.startDate}
+          onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+        />
+        <TextField
+          type="date" label="To" InputLabelProps={{ shrink: true }}
+          value={form.endDate}
+          onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+        />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={form.halfDay}
+              onChange={(e) => setForm({ ...form, halfDay: e.target.checked })}
+            />
+          }
+          label="½ day"
+        />
+        <TextField
+          label="Reason"
+          value={form.reason}
+          onChange={(e) => setForm({ ...form, reason: e.target.value })}
+        />
+      </CrudDrawer>
     </Box>
   );
 }

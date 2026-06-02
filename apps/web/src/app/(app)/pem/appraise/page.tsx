@@ -13,32 +13,39 @@ import {
 } from '@mui/material';
 import type { AppraisalView } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
 
 /** Appraiser (manager) queue — rate team members. Cannot appraise self. */
 export default function AppraiseQueuePage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<AppraisalView[]>([]);
   const [open, setOpen] = useState<AppraisalView | null>(null);
   const [comments, setComments] = useState('');
   const [scores, setScores] = useState<Record<string, number>>({});
   const [overall, setOverall] = useState<number | ''>('');
-  const [err, setErr] = useState('');
-  const [msg, setMsg] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const load = () => api<AppraisalView[]>('/pem/appraise').then(setRows);
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    try {
+      setRows(await api<AppraisalView[]>('/pem/appraise'));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const edit = (r: AppraisalView) => {
     setOpen(r);
     setComments(r.appraiserComments ?? '');
     setScores(r.scores ?? {});
     setOverall(r.overallRating ?? '');
-    setErr('');
-    setMsg('');
   };
 
   const submit = async () => {
     if (!open) return;
-    setErr('');
+    setSaving(true);
     try {
       await api(`/pem/reports/${open.id}/appraise`, {
         method: 'POST',
@@ -48,25 +55,32 @@ export default function AppraiseQueuePage() {
           overallRating: Number(overall),
         }),
       });
-      setMsg('Appraisal submitted.');
+      notify.success('Appraisal submitted.');
       setOpen(null);
       load();
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
   const finalise = async (id: string) => {
-    await api(`/pem/reports/${id}/finalise`, { method: 'POST' });
-    load();
+    try {
+      await api(`/pem/reports/${id}/finalise`, { method: 'POST' });
+      notify.success('Appraisal finalised.');
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Appraisal Queue
-      </Typography>
-      {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
+      <PageHeader
+        title="Appraisal Queue"
+        subtitle="Rate your team members. You cannot appraise yourself."
+      />
 
       <Stack spacing={1.5}>
         {rows.length === 0 && (
@@ -96,44 +110,49 @@ export default function AppraiseQueuePage() {
                 </Button>
               )}
             </Stack>
-
-            {open?.id === r.id && (
-              <Box mt={2}>
-                {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
-                {r.selfComments && (
-                  <Alert severity="info" sx={{ mb: 2 }}>
-                    Employee said: {r.selfComments}
-                  </Alert>
-                )}
-                {r.sections.map((s) => (
-                  <TextField
-                    key={s} size="small" type="number"
-                    label={`${s} (${r.ratingMin}-${r.ratingMax})`}
-                    sx={{ mr: 2, mb: 2, width: 180 }}
-                    value={scores[s] ?? ''}
-                    onChange={(e) =>
-                      setScores({ ...scores, [s]: Number(e.target.value) })
-                    }
-                  />
-                ))}
-                <TextField
-                  size="small" type="number" label="Overall rating"
-                  sx={{ mb: 2, width: 180, display: 'block' }}
-                  value={overall}
-                  onChange={(e) => setOverall(Number(e.target.value))}
-                />
-                <TextField
-                  fullWidth multiline minRows={3} label="Appraiser comments"
-                  value={comments} sx={{ mb: 2 }}
-                  onChange={(e) => setComments(e.target.value)}
-                />
-                <Button variant="contained" onClick={submit}>Submit</Button>
-                <Button sx={{ ml: 1 }} onClick={() => setOpen(null)}>Cancel</Button>
-              </Box>
-            )}
           </Paper>
         ))}
       </Stack>
+
+      <CrudDrawer
+        open={!!open}
+        title="Appraise"
+        subtitle={open ? `${open.staffName} (${open.staffNo})` : undefined}
+        onClose={() => setOpen(null)}
+        onSubmit={submit}
+        submitLabel="Submit"
+        submitting={saving}
+      >
+        {open && (
+          <>
+            {open.selfComments && (
+              <Alert severity="info">
+                Employee said: {open.selfComments}
+              </Alert>
+            )}
+            {open.sections.map((s) => (
+              <TextField
+                key={s} type="number"
+                label={`${s} (${open.ratingMin}-${open.ratingMax})`}
+                value={scores[s] ?? ''}
+                onChange={(e) =>
+                  setScores({ ...scores, [s]: Number(e.target.value) })
+                }
+              />
+            ))}
+            <TextField
+              type="number" label="Overall rating"
+              value={overall}
+              onChange={(e) => setOverall(Number(e.target.value))}
+            />
+            <TextField
+              fullWidth multiline minRows={3} label="Appraiser comments"
+              value={comments}
+              onChange={(e) => setComments(e.target.value)}
+            />
+          </>
+        )}
+      </CrudDrawer>
     </Box>
   );
 }

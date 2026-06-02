@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -13,17 +12,15 @@ import {
   Typography,
 } from '@mui/material';
 import { useSearchParams } from 'next/navigation';
-import type {
-  ApplicationView,
-  PipelineColumn,
-} from '@hrms/contracts';
+import type { ApplicationView, PipelineColumn } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { StaffPicker } from '@/components/inputs/StaffPicker';
+import { useNotify } from '@/components/feedback/Notify';
+import { useDialogs } from '@/components/feedback/Confirm';
 
 export const dynamic = 'force-dynamic'; // useSearchParams
 
-// `ApplicationStage` in @hrms/contracts is a Zod schema (runtime value),
-// not a TS type. The controller's MoveStageSchema.parse(body) enforces the
-// allowed values; here we use plain string typing.
 const NEXT_STAGES: Record<string, string[]> = {
   applied: ['screened', 'rejected', 'withdrawn'],
   screened: ['interview', 'rejected', 'withdrawn'],
@@ -31,8 +28,6 @@ const NEXT_STAGES: Record<string, string[]> = {
   offer: ['rejected', 'withdrawn'], // 'hired' goes through /rec/hire
 };
 
-// Next 14 CSR-bailout rule: `useSearchParams` must be wrapped in a
-// Suspense boundary at the *page* level even for client-only pages.
 export default function PipelinePage() {
   return (
     <Suspense fallback={null}>
@@ -43,48 +38,67 @@ export default function PipelinePage() {
 
 function PipelineInner() {
   const params = useSearchParams();
+  const notify = useNotify();
+  const { prompt } = useDialogs();
   const [code, setCode] = useState(params.get('code') ?? '');
   const [cols, setCols] = useState<PipelineColumn[]>([]);
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
+  const [hireFor, setHireFor] = useState<ApplicationView | null>(null);
+  const [hire, setHire] = useState({ staffNo: '', postId: '' });
+  const [saving, setSaving] = useState(false);
 
   const load = async () => {
     if (!code) return;
-    setCols(await api<PipelineColumn[]>(`/rec/jobs/${code}/pipeline`));
+    try {
+      setCols(await api<PipelineColumn[]>(`/rec/jobs/${code}/pipeline`));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
-  useEffect(() => { load(); }, []); // eslint-disable-line
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const move = async (app: ApplicationView, stage: string) => {
-    setErr('');
     try {
-      const reason =
-        stage === 'rejected' ? (prompt('Rejection reason?') ?? undefined) : undefined;
+      let reason: string | undefined;
+      if (stage === 'rejected') {
+        const r = await prompt({
+          title: 'Reject application',
+          label: 'Rejection reason',
+          multiline: true,
+          required: true,
+          confirmLabel: 'Reject',
+        });
+        if (r === null) return;
+        reason = r;
+      }
       await api(`/rec/applications/${app.id}/stage`, {
         method: 'POST', body: JSON.stringify({ stage, reason }),
       });
+      notify.success(`Moved to ${stage}`);
       load();
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
     }
   };
 
-  const hire = async (app: ApplicationView) => {
-    const staffNo = prompt('Staff number for new hire?');
-    const postId = prompt('Post ID to fill?');
-    if (!staffNo || !postId) return;
+  const submitHire = async () => {
+    if (!hireFor) return;
+    setSaving(true);
     try {
       const r = await api<{ staffNo: string }>('/rec/hire', {
         method: 'POST',
         body: JSON.stringify({
-          applicationId: app.id,
-          staffNo,
-          postId,
+          applicationId: hireFor.id,
+          staffNo: hire.staffNo,
+          postId: hire.postId,
         }),
       });
-      setMsg(`Hired ${app.candidateName} as ${r.staffNo}.`);
+      notify.success(`Hired ${hireFor.candidateName} as ${r.staffNo}`);
+      setHireFor(null);
       load();
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -97,10 +111,8 @@ function PipelineInner() {
         <TextField size="small" label="Job code" value={code}
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && load()} />
-        <Button onClick={load}>Load</Button>
+        <Button variant="contained" onClick={load}>Load</Button>
       </Stack>
-      {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
-      {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
 
       <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', pb: 2 }}>
         {cols.map((col) => (
@@ -124,7 +136,7 @@ function PipelineInner() {
                   )}
                   {col.stage === 'offer' && (
                     <Button size="small" sx={{ mt: 1 }} variant="contained"
-                      onClick={() => hire(a)}>
+                      onClick={() => { setHire({ staffNo: '', postId: '' }); setHireFor(a); }}>
                       Hire → PIM
                     </Button>
                   )}
@@ -148,6 +160,22 @@ function PipelineInner() {
           </Paper>
         ))}
       </Box>
+
+      <CrudDrawer
+        open={!!hireFor}
+        title="Hire candidate"
+        subtitle={hireFor?.candidateName}
+        onClose={() => setHireFor(null)}
+        onSubmit={submitHire}
+        submitLabel="Hire"
+        submitting={saving}
+        submitDisabled={!hire.staffNo || !hire.postId}
+      >
+        <TextField label="New staff number" value={hire.staffNo} required
+          onChange={(e) => setHire({ ...hire, staffNo: e.target.value })} />
+        <TextField label="Post ID to fill" value={hire.postId} required
+          onChange={(e) => setHire({ ...hire, postId: e.target.value })} />
+      </CrudDrawer>
     </Box>
   );
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Card,
@@ -15,6 +14,8 @@ import {
 } from '@mui/material';
 import type { PlanView, SubscriptionView } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const colorByStatus = (s: string) =>
   s === 'active' ? 'success' :
@@ -25,18 +26,21 @@ const colorByStatus = (s: string) =>
 /** Tenant-admin subscription self-service: pick a plan, launch checkout,
  *  open the hosted billing portal. */
 export default function SubscriptionPage() {
+  const notify = useNotify();
   const [sub, setSub] = useState<SubscriptionView | null>(null);
   const [plans, setPlans] = useState<PlanView[]>([]);
-  const [err, setErr] = useState('');
 
   const load = async () => {
-    setSub(await api<SubscriptionView>('/bil/subscription'));
-    setPlans(await api<PlanView[]>('/bil/plans'));
+    try {
+      setSub(await api<SubscriptionView>('/bil/subscription'));
+      setPlans(await api<PlanView[]>('/bil/plans'));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const checkout = async (planCode: string) => {
-    setErr('');
     try {
       const origin = window.location.origin;
       const r = await api<{ url: string }>('/bil/checkout', {
@@ -49,12 +53,11 @@ export default function SubscriptionPage() {
       });
       window.location.href = r.url;
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
     }
   };
 
   const portal = async () => {
-    setErr('');
     try {
       const r = await api<{ url: string }>('/bil/portal', {
         method: 'POST',
@@ -62,7 +65,7 @@ export default function SubscriptionPage() {
       });
       window.location.href = r.url;
     } catch (e: any) {
-      setErr(e.message);
+      notify.error(e.message);
     }
   };
 
@@ -71,10 +74,14 @@ export default function SubscriptionPage() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Subscription
-      </Typography>
-      {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
+      <PageHeader
+        title="Subscription"
+        primary={
+          sub.status !== 'none'
+            ? { label: 'Manage billing', icon: 'credit_card', onClick: portal }
+            : undefined
+        }
+      />
 
       <Card variant="outlined" sx={{ mb: 3 }}>
         <CardContent>
@@ -95,12 +102,6 @@ export default function SubscriptionPage() {
               <Typography variant="body2" color="text.secondary">
                 Trial ends {new Date(sub.trialEndsAt).toLocaleDateString()}
               </Typography>
-            )}
-            <Box flexGrow={1} />
-            {sub.status !== 'none' && (
-              <Button variant="outlined" onClick={portal}>
-                Manage billing
-              </Button>
             )}
           </Stack>
           <Typography variant="body2" color="text.secondary" mb={0.5}>

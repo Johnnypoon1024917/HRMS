@@ -5,6 +5,7 @@ import { alpha, useTheme } from '@mui/material/styles';
 import { useRouter } from 'next/navigation';
 import { useBoot } from '@/theme/AppProviders';
 import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
 
 const MODULE_NAMES: Record<string, string> = {
   pim: 'People',
@@ -47,12 +48,10 @@ export default function Dashboard() {
 
   return (
     <Box sx={{ maxWidth: 1200 }}>
-      <Typography variant="h4" mb={0.5}>
-        Welcome
-      </Typography>
-      <Typography color="text.secondary" mb={4}>
-        {branding.appName} — choose a module to get started.
-      </Typography>
+      <PageHeader
+        title="Welcome"
+        subtitle={`${branding.appName} — choose a module to get started.`}
+      />
       <Grid container spacing={2}>
         {modules.map((m) => {
           const target = m.nav[0]?.path;

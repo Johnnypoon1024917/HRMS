@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -14,71 +13,85 @@ import {
 } from '@mui/material';
 import type { RatingDistribution } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
+
+const emptyForm = {
+  name: '',
+  periodYear: new Date().getFullYear(),
+  ratingMin: 1,
+  ratingMax: 5,
+};
 
 /** Appraisal cycle admin: create, "call" (generate) reports, view spread. */
 export default function CyclesPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<any[]>([]);
-  const [f, setF] = useState({
-    name: '',
-    periodYear: new Date().getFullYear(),
-    ratingMin: 1,
-    ratingMax: 5,
-  });
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [f, setF] = useState(emptyForm);
   const [dist, setDist] = useState<RatingDistribution | null>(null);
-  const [msg, setMsg] = useState('');
 
-  const load = () => api<any[]>('/pem/cycles').then(setRows);
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    try {
+      setRows(await api<any[]>('/pem/cycles'));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openDrawer = () => { setF(emptyForm); setOpen(true); };
 
   const create = async () => {
-    await api('/pem/cycles', {
-      method: 'PUT',
-      body: JSON.stringify({
-        ...f,
-        sections: ['delivery', 'teamwork', 'leadership'],
-        status: 'draft',
-      }),
-    });
-    setMsg('Cycle created.');
-    load();
+    setSaving(true);
+    try {
+      await api('/pem/cycles', {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...f,
+          sections: ['delivery', 'teamwork', 'leadership'],
+          status: 'draft',
+        }),
+      });
+      notify.success('Cycle created.');
+      setOpen(false);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const generate = async (id: string) => {
-    const r = await api<{ generated: number; total: number }>(
-      `/pem/cycles/${id}/generate`,
-      { method: 'POST' },
-    );
-    setMsg(`Generated ${r.generated} of ${r.total} appraisal reports.`);
-    load();
+    try {
+      const r = await api<{ generated: number; total: number }>(
+        `/pem/cycles/${id}/generate`,
+        { method: 'POST' },
+      );
+      notify.success(`Generated ${r.generated} of ${r.total} appraisal reports.`);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   const showDist = async (id: string) => {
-    setDist(await api<RatingDistribution>(`/pem/cycles/${id}/distribution`));
+    try {
+      setDist(await api<RatingDistribution>(`/pem/cycles/${id}/distribution`));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Appraisal Cycles
-      </Typography>
-      {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
-
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
-          <TextField size="small" label="Name" value={f.name}
-            onChange={(e) => setF({ ...f, name: e.target.value })} />
-          <TextField size="small" type="number" label="Year" sx={{ width: 110 }}
-            value={f.periodYear}
-            onChange={(e) => setF({ ...f, periodYear: Number(e.target.value) })} />
-          <TextField size="small" type="number" label="Rating min" sx={{ width: 110 }}
-            value={f.ratingMin}
-            onChange={(e) => setF({ ...f, ratingMin: Number(e.target.value) })} />
-          <TextField size="small" type="number" label="Rating max" sx={{ width: 110 }}
-            value={f.ratingMax}
-            onChange={(e) => setF({ ...f, ratingMax: Number(e.target.value) })} />
-          <Button variant="contained" onClick={create}>Create cycle</Button>
-        </Stack>
-      </Paper>
+      <PageHeader
+        title="Appraisal Cycles"
+        primary={{ label: 'New cycle', icon: 'add', onClick: openDrawer }}
+      />
 
       <Stack spacing={1.5}>
         {rows.map((c) => (
@@ -124,6 +137,25 @@ export default function CyclesPage() {
           </Paper>
         ))}
       </Stack>
+
+      <CrudDrawer
+        open={open}
+        title="New appraisal cycle"
+        onClose={() => setOpen(false)}
+        onSubmit={create}
+        submitLabel="Create cycle"
+        submitting={saving}
+        submitDisabled={!f.name}
+      >
+        <TextField label="Name" value={f.name} required
+          onChange={(e) => setF({ ...f, name: e.target.value })} />
+        <TextField type="number" label="Year" value={f.periodYear}
+          onChange={(e) => setF({ ...f, periodYear: Number(e.target.value) })} />
+        <TextField type="number" label="Rating min" value={f.ratingMin}
+          onChange={(e) => setF({ ...f, ratingMin: Number(e.target.value) })} />
+        <TextField type="number" label="Rating max" value={f.ratingMax}
+          onChange={(e) => setF({ ...f, ratingMax: Number(e.target.value) })} />
+      </CrudDrawer>
     </Box>
   );
 }

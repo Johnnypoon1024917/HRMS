@@ -1,20 +1,19 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import {
   Box,
-  Button,
   FormControlLabel,
   MenuItem,
-  Paper,
-  Stack,
   Switch,
   TextField,
-  Typography,
 } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { AwardTypeUpsert } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
 
 const cols: GridColDef[] = [
   { field: 'code', headerName: 'Code', width: 110 },
@@ -24,57 +23,90 @@ const cols: GridColDef[] = [
   { field: 'active', headerName: 'Active', width: 90, type: 'boolean' },
 ];
 
-export default function AwardTypesPage() {
-  const [rows, setRows] = useState<any[]>([]);
-  const [f, setF] = useState<AwardTypeUpsert>({
-    code: '',
-    nameEn: '',
-    kind: 'recognition',
-    active: true,
-  });
+const emptyForm: AwardTypeUpsert = {
+  code: '',
+  nameEn: '',
+  kind: 'recognition',
+  active: true,
+};
 
-  const load = () => api<any[]>('/ham/types').then(setRows);
-  useEffect(() => { load(); }, []);
+export default function AwardTypesPage() {
+  const notify = useNotify();
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [f, setF] = useState<AwardTypeUpsert>(emptyForm);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setRows(await api<any[]>('/ham/types'));
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openDrawer = () => { setF(emptyForm); setOpen(true); };
 
   const save = async () => {
-    await api('/ham/types', { method: 'PUT', body: JSON.stringify(f) });
-    setF({ ...f, code: '', nameEn: '', lsiYears: undefined });
-    load();
+    setSaving(true);
+    try {
+      await api('/ham/types', { method: 'PUT', body: JSON.stringify(f) });
+      notify.success('Award type saved');
+      setOpen(false);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Award Types
-      </Typography>
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
-          <TextField size="small" label="Code" value={f.code}
-            onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} />
-          <TextField size="small" label="Name (EN)" value={f.nameEn}
-            onChange={(e) => setF({ ...f, nameEn: e.target.value })} />
-          <TextField select size="small" label="Kind" sx={{ minWidth: 140 }}
-            value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as any })}>
-            {['medal', 'travel', 'lsi', 'recognition'].map((k) => (
-              <MenuItem key={k} value={k}>{k}</MenuItem>
-            ))}
-          </TextField>
-          {f.kind === 'lsi' && (
-            <TextField size="small" type="number" label="LSI years" sx={{ width: 130 }}
-              value={f.lsiYears ?? ''}
-              onChange={(e) => setF({ ...f, lsiYears: Number(e.target.value) })} />
-          )}
-          <FormControlLabel
-            control={<Switch checked={f.active}
-              onChange={(e) => setF({ ...f, active: e.target.checked })} />}
-            label="Active" />
-          <Button variant="contained" onClick={save}>Save</Button>
-        </Stack>
-      </Paper>
+      <PageHeader
+        title="Award Types"
+        primary={{ label: 'Add award type', icon: 'add', onClick: openDrawer }}
+      />
+
       <div style={{ height: 460, width: '100%' }}>
-        <DataGrid rows={rows} columns={cols} getRowId={(r) => r.code}
+        <DataGrid rows={rows} columns={cols} loading={loading} getRowId={(r) => r.code}
           disableRowSelectionOnClick />
       </div>
+
+      <CrudDrawer
+        open={open}
+        title="Add award type"
+        onClose={() => setOpen(false)}
+        onSubmit={save}
+        submitLabel="Save"
+        submitting={saving}
+        submitDisabled={!f.code || !f.nameEn}
+      >
+        <TextField label="Code" value={f.code}
+          onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} />
+        <TextField label="Name (EN)" value={f.nameEn}
+          onChange={(e) => setF({ ...f, nameEn: e.target.value })} />
+        <TextField select label="Kind"
+          value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value as any })}>
+          {['medal', 'travel', 'lsi', 'recognition'].map((k) => (
+            <MenuItem key={k} value={k}>{k}</MenuItem>
+          ))}
+        </TextField>
+        {f.kind === 'lsi' && (
+          <TextField type="number" label="LSI years"
+            value={f.lsiYears ?? ''}
+            onChange={(e) => setF({ ...f, lsiYears: Number(e.target.value) })} />
+        )}
+        <FormControlLabel
+          control={<Switch checked={f.active}
+            onChange={(e) => setF({ ...f, active: e.target.checked })} />}
+          label="Active" />
+      </CrudDrawer>
     </Box>
   );
 }

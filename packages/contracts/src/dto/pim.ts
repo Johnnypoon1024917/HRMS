@@ -43,6 +43,63 @@ export interface StaffListItem {
   status: z.infer<typeof StaffStatus>;
 }
 
+export interface StaffContactView {
+  id: string;
+  kind: string; // phone | email | address | emergency
+  value: string;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+}
+
+export interface StaffAppointmentView {
+  id: string;
+  postId?: string | null;
+  rankCode: string;
+  basis: string;
+  contractType: string;
+  contractEndDate?: string | null;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+}
+
+export interface StaffSalaryView {
+  id: string;
+  scaleCode: string;
+  point: number;
+  amount: number | string;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+}
+
+export interface StaffQualificationView {
+  id: string;
+  type: string;
+  title: string;
+  institution?: string | null;
+  awardedOn?: string | null;
+}
+
+/** Aggregated record behind the Employee Profile (GET /pim/staff/:id). */
+export interface StaffDetail {
+  id: string;
+  staffNo: string;
+  nameEn: string;
+  nameZh?: string | null;
+  sex?: string;
+  dob?: string;
+  idType?: string;
+  idNoMasked?: string;
+  classification?: string;
+  status?: z.infer<typeof StaffStatus>;
+  createdAt?: string;
+  contacts?: StaffContactView[];
+  appointments?: StaffAppointmentView[];
+  salaries?: StaffSalaryView[];
+  qualifications?: StaffQualificationView[];
+  /** Present (true) when the caller may only see the minimal projection. */
+  restricted?: boolean;
+}
+
 export interface Paged<T> {
   items: T[];
   total: number;

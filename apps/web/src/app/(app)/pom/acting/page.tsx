@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Box, Chip, Typography } from '@mui/material';
+import { Box, Chip } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { ActingRecord } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const cols: GridColDef[] = [
   { field: 'staffNo', headerName: 'Staff', width: 110 },
@@ -28,15 +30,16 @@ const cols: GridColDef[] = [
 
 /** Staff currently acting (UR-POM-002); ending-soon flags for follow-up. */
 export default function ActingPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<ActingRecord[]>([]);
   useEffect(() => {
-    api<ActingRecord[]>('/pom/acting').then(setRows);
-  }, []);
+    api<ActingRecord[]>('/pom/acting')
+      .then(setRows)
+      .catch((e: any) => notify.error(e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Acting Appointments
-      </Typography>
+      <PageHeader title="Acting Appointments" />
       <div style={{ height: 540, width: '100%' }}>
         <DataGrid
           rows={rows.map((r) => ({ id: r.staffId, ...r }))}

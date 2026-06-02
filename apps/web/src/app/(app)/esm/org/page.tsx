@@ -5,6 +5,8 @@ import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
 import type { OrgChartNode } from '@hrms/contracts';
 import { api } from '@/lib/api';
 import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 function Node({ n, depth }: { n: OrgChartNode; depth: number }) {
   const vac = n.establishment - n.strength;
@@ -32,15 +34,16 @@ function Node({ n, depth }: { n: OrgChartNode; depth: number }) {
 
 /** Org chart + Establishment & Strength figures (UR-ESM-003 / UR-ORM-001). */
 export default function OrgPage() {
+  const notify = useNotify();
   const [tree, setTree] = useState<OrgChartNode[]>([]);
   useEffect(() => {
-    api<OrgChartNode[]>('/esm/org').then(setTree);
-  }, []);
+    api<OrgChartNode[]>('/esm/org')
+      .then(setTree)
+      .catch((e: any) => notify.error(e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Organisation & Strength
-      </Typography>
+      <PageHeader title="Organisation & Strength" />
       {tree.map((n) => (
         <Node key={n.id} n={n} depth={0} />
       ))}

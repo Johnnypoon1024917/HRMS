@@ -1,42 +1,50 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Chip, Paper, Stack, TextField } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import type { InvoiceView } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const statusColor = (s: string) =>
   s === 'paid' ? 'success' : s === 'overdue' ? 'error' : s === 'cancelled' ? 'default' : 'warning';
 
 export default function InvoicesPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<InvoiceView[]>([]);
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
-  const [msg, setMsg] = useState('');
 
-  const load = () => api<InvoiceView[]>(`/hbm/invoices?period=${period}`).then(setRows);
-  useEffect(() => { load(); }, []); // eslint-disable-line
+  const load = async () => {
+    try {
+      setRows(await api<InvoiceView[]>(`/hbm/invoices?period=${period}`));
+    } catch (e: any) {
+      notify.error(e.message);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const generate = async () => {
-    const r = await api<{ invoices: number }>('/hbm/invoices/generate', {
-      method: 'POST', body: JSON.stringify({ period }),
-    });
-    setMsg(`Generated ${r.invoices} invoice(s) for ${period}.`);
-    load();
+    try {
+      const r = await api<{ invoices: number }>('/hbm/invoices/generate', {
+        method: 'POST', body: JSON.stringify({ period }),
+      });
+      notify.success(`Generated ${r.invoices} invoice(s) for ${period}.`);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   const pay = async (id: string) => {
-    await api(`/hbm/invoices/${id}/paid`, { method: 'POST' });
-    load();
+    try {
+      await api(`/hbm/invoices/${id}/paid`, { method: 'POST' });
+      notify.success('Invoice marked paid');
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    }
   };
 
   const cols: GridColDef[] = [
@@ -62,17 +70,17 @@ export default function InvoicesPage() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Benefit Invoices
-      </Typography>
-      {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
+      <PageHeader
+        title="Benefit Invoices"
+        primary={{ label: 'Generate invoices', icon: 'receipt_long', onClick: generate }}
+        secondary={[{ label: 'Refresh', icon: 'refresh', onClick: load }]}
+      />
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Stack direction="row" spacing={2} alignItems="center">
           <TextField size="small" label="Period (YYYY-MM)" value={period}
             onChange={(e) => setPeriod(e.target.value)} />
-          <Button variant="outlined" onClick={load}>Refresh</Button>
-          <Button variant="contained" onClick={generate}>Generate invoices</Button>
+          <Button variant="outlined" onClick={load}>Apply</Button>
         </Stack>
       </Paper>
 

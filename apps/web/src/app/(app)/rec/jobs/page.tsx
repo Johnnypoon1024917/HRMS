@@ -1,40 +1,59 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import {
-  Box,
-  Button,
-  Chip,
-  MenuItem,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Chip, MenuItem, TextField } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { useRouter } from 'next/navigation';
 import type { JobOpeningView } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { CrudDrawer } from '@/components/CrudDrawer';
+import { useNotify } from '@/components/feedback/Notify';
+
+const emptyForm = {
+  code: '',
+  title: '',
+  rankCode: '',
+  openings: 1,
+  description: '',
+  status: 'open' as 'draft' | 'open' | 'on_hold' | 'closed',
+};
 
 export default function JobsPage() {
   const router = useRouter();
+  const notify = useNotify();
   const [rows, setRows] = useState<JobOpeningView[]>([]);
-  const [f, setF] = useState({
-    code: '',
-    title: '',
-    rankCode: '',
-    openings: 1,
-    description: '',
-    status: 'open' as 'draft' | 'open' | 'on_hold' | 'closed',
-  });
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [f, setF] = useState(emptyForm);
 
-  const load = () => api<JobOpeningView[]>('/rec/jobs').then(setRows);
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      setRows(await api<JobOpeningView[]>('/rec/jobs'));
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openDrawer = () => { setF(emptyForm); setOpen(true); };
 
   const save = async () => {
-    await api('/rec/jobs', { method: 'PUT', body: JSON.stringify(f) });
-    setF({ ...f, code: '', title: '' });
-    load();
+    setSaving(true);
+    try {
+      await api('/rec/jobs', { method: 'PUT', body: JSON.stringify(f) });
+      notify.success('Job opening saved');
+      setOpen(false);
+      load();
+    } catch (e: any) {
+      notify.error(e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const cols: GridColDef[] = [
@@ -62,35 +81,41 @@ export default function JobsPage() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        Job Openings
-      </Typography>
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} flexWrap="wrap" useFlexGap>
-          <TextField size="small" label="Code" value={f.code}
-            onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} />
-          <TextField size="small" label="Title" sx={{ minWidth: 220 }} value={f.title}
-            onChange={(e) => setF({ ...f, title: e.target.value })} />
-          <TextField size="small" label="Rank" value={f.rankCode}
-            onChange={(e) => setF({ ...f, rankCode: e.target.value })} />
-          <TextField size="small" type="number" label="Openings" sx={{ width: 110 }}
-            value={f.openings}
-            onChange={(e) => setF({ ...f, openings: Number(e.target.value) })} />
-          <TextField select size="small" label="Status" sx={{ minWidth: 130 }}
-            value={f.status} onChange={(e) => setF({ ...f, status: e.target.value as any })}>
-            {['draft', 'open', 'on_hold', 'closed'].map((s) => (
-              <MenuItem key={s} value={s}>{s}</MenuItem>
-            ))}
-          </TextField>
-          <Button variant="contained" onClick={save}
-            disabled={!f.code || !f.title}>
-            Save
-          </Button>
-        </Stack>
-      </Paper>
+      <PageHeader
+        title="Job Openings"
+        primary={{ label: 'New job', icon: 'add', onClick: openDrawer }}
+      />
+
       <div style={{ height: 460, width: '100%' }}>
-        <DataGrid rows={rows} columns={cols} disableRowSelectionOnClick />
+        <DataGrid rows={rows} loading={loading} columns={cols} disableRowSelectionOnClick />
       </div>
+
+      <CrudDrawer
+        open={open}
+        title="New job opening"
+        onClose={() => setOpen(false)}
+        onSubmit={save}
+        submitLabel="Save"
+        submitting={saving}
+        submitDisabled={!f.code || !f.title}
+      >
+        <TextField label="Code" value={f.code}
+          onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} />
+        <TextField label="Title" value={f.title}
+          onChange={(e) => setF({ ...f, title: e.target.value })} />
+        <TextField label="Rank" value={f.rankCode}
+          onChange={(e) => setF({ ...f, rankCode: e.target.value })} />
+        <TextField type="number" label="Openings" value={f.openings}
+          onChange={(e) => setF({ ...f, openings: Number(e.target.value) })} />
+        <TextField label="Description" multiline minRows={2} value={f.description}
+          onChange={(e) => setF({ ...f, description: e.target.value })} />
+        <TextField select label="Status" value={f.status}
+          onChange={(e) => setF({ ...f, status: e.target.value as any })}>
+          {['draft', 'open', 'on_hold', 'closed'].map((s) => (
+            <MenuItem key={s} value={s}>{s}</MenuItem>
+          ))}
+        </TextField>
+      </CrudDrawer>
     </Box>
   );
 }

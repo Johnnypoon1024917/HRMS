@@ -16,6 +16,8 @@ import { useRouter } from 'next/navigation';
 import type { MyProfile } from '@hrms/contracts';
 import { api } from '@/lib/api';
 import { Sym } from '@/components/Sym';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 const apptCols: GridColDef[] = [
   { field: 'rankCode', headerName: 'Rank', width: 100 },
@@ -27,20 +29,21 @@ const apptCols: GridColDef[] = [
 ];
 
 export default function MyProfilePage() {
+  const notify = useNotify();
   const [p, setP] = useState<MyProfile | null>(null);
   const router = useRouter();
 
   useEffect(() => {
-    api<MyProfile>('/ess/me').then(setP);
-  }, []);
+    api<MyProfile>('/ess/me')
+      .then(setP)
+      .catch((e: any) => notify.error(e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!p) return null;
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={2}>
-        My Profile
-      </Typography>
+      <PageHeader title="My Profile" />
 
       <Grid container spacing={2} mb={3}>
         <Grid item xs={12} md={5}>

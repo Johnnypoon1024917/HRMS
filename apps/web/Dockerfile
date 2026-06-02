@@ -41,6 +41,10 @@ COPY --from=build /repo/apps/web/public          ./apps/web/public
 COPY --from=build /repo/apps/web/package.json    ./apps/web/package.json
 COPY --from=build /repo/apps/web/next.config.mjs ./apps/web/next.config.mjs
 
+# Run as the unprivileged built-in `node` user (uid 1000), not root.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 5000
 WORKDIR /app/apps/web
 # Direct binary — skips `npx`'s lookup roundtrip on every container start.

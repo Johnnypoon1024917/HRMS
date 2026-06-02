@@ -16,6 +16,8 @@ import {
 import { buildTheme } from './buildTheme';
 import { api, getToken } from '@/lib/api';
 import { registerPwa } from '@/lib/pwa';
+import { NotifyProvider } from '@/components/feedback/Notify';
+import { ConfirmProvider } from '@/components/feedback/Confirm';
 
 interface BootState {
   branding: TenantBranding;
@@ -65,7 +67,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     <Ctx.Provider value={{ branding, modules, perms, refresh }}>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        {children}
+        <NotifyProvider>
+          <ConfirmProvider>{children}</ConfirmProvider>
+        </NotifyProvider>
       </ThemeProvider>
     </Ctx.Provider>
   );

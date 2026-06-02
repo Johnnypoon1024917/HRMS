@@ -1,19 +1,24 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Box, Chip, Typography } from '@mui/material';
+import { Box, Chip } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { useRouter } from 'next/navigation';
 import type { TeamMember } from '@hrms/contracts';
 import { api } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
+import { useNotify } from '@/components/feedback/Notify';
 
 export default function MyTeamPage() {
+  const notify = useNotify();
   const [rows, setRows] = useState<TeamMember[]>([]);
   const router = useRouter();
 
   useEffect(() => {
-    api<TeamMember[]>('/ess/team').then(setRows);
-  }, []);
+    api<TeamMember[]>('/ess/team')
+      .then(setRows)
+      .catch((e: any) => notify.error(e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cols: GridColDef[] = [
     { field: 'staffNo', headerName: 'Staff', width: 110 },
@@ -51,12 +56,10 @@ export default function MyTeamPage() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={600} mb={1}>
-        My Team
-      </Typography>
-      <Typography color="text.secondary" mb={2}>
-        Staff within your data scope. Pending counts link to leave approvals.
-      </Typography>
+      <PageHeader
+        title="My Team"
+        subtitle="Staff within your data scope. Pending counts link to leave approvals."
+      />
       <div style={{ height: 540, width: '100%' }}>
         <DataGrid
           rows={rows.map((r) => ({ id: r.staffId, ...r }))}

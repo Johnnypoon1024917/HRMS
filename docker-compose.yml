@@ -3,9 +3,10 @@ services:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: hrms
-      POSTGRES_PASSWORD: hrms
-      POSTGRES_DB: hrms
+      # Overridable for non-dev deploys via a root .env (see .env.example).
+      POSTGRES_USER: ${POSTGRES_USER:-hrms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hrms}
+      POSTGRES_DB: ${POSTGRES_DB:-hrms}
     ports: ["5435:5432"]   # host 5435 → container 5432 (5432 is in use on host)
     volumes: [hrms_db:/var/lib/postgresql/data]
     healthcheck:
@@ -39,7 +40,7 @@ services:
     depends_on:
       db: { condition: service_healthy }
     environment:
-      DATABASE_URL: postgresql://hrms:hrms@db:5432/hrms
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hrms}:${POSTGRES_PASSWORD:-hrms}@db:5432/${POSTGRES_DB:-hrms}
     working_dir: /app/apps/api
     # YAML list form keeps argv intact (the folded `>` block was being
     # word-split, causing "sh: syntax error: unexpected &&").
@@ -63,9 +64,11 @@ services:
       redis: { condition: service_healthy }
       init:  { condition: service_completed_successfully }
     environment:
-      DATABASE_URL: postgresql://hrms:hrms@db:5432/hrms
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hrms}:${POSTGRES_PASSWORD:-hrms}@db:5432/${POSTGRES_DB:-hrms}
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: change-me-in-prod
+      # No insecure default: prod must supply JWT_SECRET (root .env). Falls
+      # back to a clearly-marked dev secret only for local convenience.
+      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-change-me}
       DEPLOYMENT_MODE: saas          # set to "onprem" + SINGLE_TENANT for on-prem
       API_PUBLIC_URL: http://localhost:4000
       WEB_PUBLIC_URL: http://localhost:5000
